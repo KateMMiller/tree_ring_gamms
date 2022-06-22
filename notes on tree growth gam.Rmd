@@ -1,0 +1,229 @@
+---
+title: "tree ring gam notes"
+output: html_notebook
+editor_options: 
+  chunk_output_type: console
+---
+Referencing Circuzzi et al. 2021:
+- "Tree cores with low interseries correlation among the sampled population are typically removed." Make sure I check for this.
+- Calculated basal area increment, the annual increase in cross-sectional area of a tree to obtain a two-dimensional estimate of annual growth for each tree
+
+
+Model covariates
+X month
+X year
+X crown class (codom or inter)
+X DBH 
+X species
+X elevation
+X slope
+X aspect
+X Unit (MDI-E, MDI-W, Schoodic, IAH)
+X Vegetation type (use Group_1 from shapefile)
+X soil pH (of first sample)
+X % base saturation (of first sample)
+X % TC (of first sample)
+X % TN (of first sample)
+X forest floor soil depth (0-10) of first sample
+X Fire 1947 (binary)
+X SPEI: standardized precipitation-evapotranspiration index (3 month metric from PRISM)
+X Deposition
+X TMIN/TMAX
+X Precip (whatever Paula used)
+  ? growing season precip and max temperature
+  ? number of drought days during growing season
+  ? longest number of consecutive days in drought
+Data cleaning tasks
+X Take ringwidth data and reshape so each row is a core and each column is a year
+X Pull out plot number from the ring-width data 
+
+Notes: 
+- Building out a model with full range of years to get a feel for the mechanics of the gamms. For the real analysis, will likely truncate around mid 1980s when atmospheric deposition data are available to test how well various models on deposition, climate, and site-level covariates predict growth.
+- Replication of cores within plot is <5, and often closer to 1 or 2 of a species, which is not enough to estimate within plot variance for random effects. Instead, I'll randomly select one core from each site for the analysis, then use the unselected cores as part of the validation process.
+- I initially tried modelling all species at the same time, but the models were too complex/cumbersome, so I'm sticking with species-specific models. This also allows us to test different models (or see how a set of models predicts growth of species differently).
+- Ultimately, I'd like to move this into a Bayesian framework, as I find it easier to set up the different model levels (eg variables that are at the plot-level and unchanging across years, variables that have a value for every year but that don't vary by plot).
+- Check PRISM data to get individual values for each site, rather than weather station data that's the same for entire park.
+
+
+```{r import}
+library(tidyverse)
+library(mgcv)
+library(gratia) # for easy plotting of results and diagnostics
+library(mgcViz) # for more customized gam plotting
+library(broom) # for tidy model output
+
+cordat_pre <- read.csv("./data/Full_plot_core_climate_deposition_dataset.csv") 
+table(cordat_pre$Crown_Class) # 118 records with Open Grown (1); 124 with Dominant (2)
+
+cordat <- cordat_pre %>% filter(Crown_Class %in% c(3, 4)) 
+
+head(cordat)
+str(cordat[,1:30])
+names(cordat)
+# have to convert to factors, otherwise get:
+    # Error in names(dat) <- object$term : 'names' attribute [2] must be the same length as the vector [0]
+cordat$Plot_Name <- as.factor(cordat$Plot_Name)
+cordat$coreID <- as.factor(cordat$coreID)
+cordat$species <- as.factor(cordat$species)
+cordat$crown_fac <- as.factor(ifelse(cordat$Crown_Class == 3, "Codom", "Inter"))
+cordat$year_fac <- as.factor(cordat$Year)
+
+num_check <- cordat %>% select(Plot_Name, coreID, species, Crown_Class) %>% unique() %>% 
+  group_by(species, Crown_Class) %>% tally()
+
+num_check
+
+
+```
+
+Initially I was going to run a model that included all species, but I had to drop crown class, and the model would have been too complex assuming species respond differently over time. Instead, going with species-specific models by crown class.
+
+```{r gam_picrub}
+table(cordat$species, cordat$Crown_Class) 
+# can only use 1 core per plot and species for hierarchical modelling, so dropping any cores younger than 1984 (acid dep) 
+# then randomly selecting one with sample_n
+
+piru84 <- cordat %>% filter(cordat$species == "PIRU") %>% filter(Year == 1984) %>% select(coreID) %>% unique()
+
+piru_cores <- cordat %>% filter(coreID %in% piru84$coreID) %>% droplevels() %>% group_by(Plot_Name) %>% 
+  sample_n(1) %>% select(coreID) %>% ungroup()
+
+piru <- cordat %>% filter(coreID %in% piru_cores$coreID)
+
+head(piru)
+
+check <- piru %>% select(Plot_Name,crown_fac, coreID) %>% unique() %>% group_by(Plot_Name, crown_fac) %>% 
+  summarize(corecnt = n()) %>% filter(corecnt > 1) %>% nrow()# none
+
+check
+e <- piru %>% select(BAIcm2) %>% filter(BAIcm2 != 0) %>% slice(which.min(BAIcm2)) %>% as.numeric()
+e #-2.052804
+piru <- piru %>% mutate(baishift = BAIcm2 + -1*e + 0.00001,
+                        logBAI = log(baishift)) %>% filter(logBAI > -10) # remove 1 large negative outlier
+
+piru <- piru[,c(1:39, 117:118, 112:116, 40:111)]
+
+# Check on how believable linear relationship is for non-smoothed covariates
+# ggplot(piru, aes(x = live_stems_ha, y = logBAI))+
+#   geom_point()+
+#   geom_smooth()
+# 
+# ggplot(piru, aes(x = elev_m, y = logBAI))+
+#   geom_point()+
+#   geom_smooth()
+# 
+# ggplot(piru, aes(x = northiness, y = logBAI))+
+#   geom_point()+
+#   geom_smooth()
+
+gam_piru1 <- gam(logBAI ~ s(Year, by = crown_fac, k = 50) + 
+                           te(northiness, elev_m) + 
+                           live_stems_ha +
+                         s(Plot_Name, bs = 're', k = 10) + 
+                         s(year_fac, bs = 're', k = 100),
+                data = piru, method = "REML")
+
+k.check(gam_piru1) #looks ok
+appraise(gam_piru1) #not bad? less variance in tails b/c fewer samples
+gratia::draw(gam_piru1, residuals = T, rug = T)
+draw(gam_piru1)
+#str(gam_piru)
+summary(gam_piru)
+summary(gam_piru1)
+
+
+gam_piru <- gam(logBAI ~ s(Year, by = crown_fac, k = 50) + 
+                           northiness + 
+                           live_stems_ha +
+                         s(Plot_Name, bs = 're', k = 10) + 
+                         s(year_fac, bs = 're', k = 100),
+                data = piru, method = "REML")
+
+k.check(gam_piru) #looks ok
+appraise(gam_piru) #not bad? less variance in tails b/c fewer samples
+gratia::draw(gam_piru, residuals = T, rug = T)
+draw(gam_piru)
+#str(gam_piru)
+summary(gam_piru)
+summary(gam_piru1)
+
+gam_piru$aic # 8112 no int
+gam_piru1$aic # 8136 int
+
+# piruviz <- getViz(gam_piru)
+# piruviz
+# str(piruviz)
+# p <- plot(sm(piruviz, 1))
+     
+broom::tidy(gam_piru)
+new_dat <- piru %>% select(Plot_Name, logBAI, Year, year_fac, crown_fac, northiness, live_stems_ha)
+
+pred <- piru %>% select(Plot_Name, logBAI, Year, year_fac, crown_fac, northiness, live_stems_ha) %>%                       bind_cols(as_tibble(predict(gam_piru, new_dat, se.fit = T))) %>%    
+                 select(Plot_Name, Year, year_fac, crown_fac, northiness, live_stems_ha, fit, se.fit) %>% 
+                 mutate(Year = as.numeric(Year)) %>% unique() %>% data.frame()
+names(piru)  
+str(pred)
+head(pred)
+
+p <- ggplot(pred, aes(x = Year, y = fit, fill = crown_fac, color = crown_fac)) + 
+       #geom_ribbon(aes(ymin = fit - se.fit, ymax = fit + se.fit), alpha = 0.2) +
+       #geom_line() + 
+       forestNETN::theme_FHM() +
+       geom_smooth()
+
+p
+
+p2 <- ggplot(pred, aes(x = Year, y = fit, group = crown_fac))+
+  geom_line(aes(group = Plot_Name), alpha = 0.1) +
+  geom_point(alpha = 0.1) + 
+  # geom_ribbon(aes(ymin = fit - 1.96*se.fit, 
+  #                 ymax = fit + 1.96*se.fit),
+  #             alpha = 0.4, fill = 'red')
+  
+p2
+
+print(plot(piruviz, allTerms = T, seWithMean = 1), pages = 1)
+print(plot(piruviz, select = 1:2, ylab = "log(BAI)"), pages = 1)
+
+
+gam_piru2 <- gam(logBAI ~ s(Year, by = crown_fac, k = 50) + 
+                            northiness + 
+                            live_stems_ha +
+                          te(SPEI03_8, Year) +
+                          s(Plot_Name, bs = 're', k = 10),
+                 data = piru, method = "REML")
+
+
+p <- ggplot(piru, aes(x = Year, y = logBAI, group = crown_fac)) 
+
+p + stat_smooth(method = 'gam')
+
+
+gam_piru$aic #5889.583
+gam_piru2$aic # 5853.478 winner
+
+k.check(gam_piru2)
+appraise(gam_piru2) #not bad?
+gratia::draw(gam_piru2, residuals = T, rug = T)
+draw(gam_piru)
+str(gam_piru)
+summary(gam_piru)
+
+# not very helpful
+sm_diffs <- difference_smooths(gam_piru, smooth = 's(Year)')
+draw(sm_diffs)
+
+sms <- evaluate_smooth(gam_piru2, "s(Year)") # gives estimate for each year by crown fac
+draw(sms)
+head(sms)
+
+ggplot(sms, aes(x = Year, y = est, group = crown_fac, color = crown_fac, fill = crown_fac))+
+  geom_ribbon(aes(ymin = est - se, ymax = est + se), alpha = 0.2)+
+  scale_fill_discrete(name = "Crown Class", "3" = )+
+  scale_color_discrete()+
+  geom_line() + theme_FHM()
+?scale_fill_discrete
+draw(gam_piru2)
+
+```
+
