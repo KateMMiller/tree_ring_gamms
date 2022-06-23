@@ -53,9 +53,14 @@ library(mgcViz) # for more customized gam plotting
 library(broom) # for tidy model output
 
 cordat_pre <- read.csv("./data/Full_plot_core_climate_deposition_dataset.csv") 
-table(cordat_pre$Crown_Class) # 118 records with Open Grown (1); 124 with Dominant (2)
+names(cordat_pre)
+table(cordat_pre$PhysiographySummary)
 
+table(cordat_pre$Stand_Structure_Code) # 118 records with Open Grown (1); 124 with Dominant (2)
+table(cordat_pre$Crown_Class)
 cordat <- cordat_pre %>% filter(Crown_Class %in% c(3, 4)) 
+head(cordat_pre[1:30])
+table(cordat_pre$aspect_fac)
 
 head(cordat)
 str(cordat[,1:30])
@@ -116,21 +121,40 @@ piru <- piru[,c(1:39, 117:118, 112:116, 40:111)]
 #   geom_point()+
 #   geom_smooth()
 
-gam_piru1 <- gam(logBAI ~ s(Year, by = crown_fac, k = 50) + 
-                           te(northiness, elev_m) + 
-                           live_stems_ha +
-                         s(Plot_Name, bs = 're', k = 10) + 
-                         s(year_fac, bs = 're', k = 100),
-                data = piru, method = "REML")
+names(piru)
+# Plot individual line for each 
+ggplot(piru, aes(x = Year, y = BAIcm2, group = Plot_Name))+
+  geom_line(alpha = 0.4, color = 'DimGrey') + facet_wrap(~crown_fac) + theme_bw() +
+  xlim(1980,2021)
+#  geom_smooth()
+   
 
-k.check(gam_piru1) #looks ok
-appraise(gam_piru1) #not bad? less variance in tails b/c fewer samples
-gratia::draw(gam_piru1, residuals = T, rug = T)
-draw(gam_piru1)
+gam_piru3 <- gam(logBAI ~ s(Year, by = crown_fac, k = 50) + 
+                          #te(northiness, elev_m, by = crown_fac, bs = 'ts') + # same smooth as default s()
+                          northiness*elev_m*live_stems_ha +
+                          s(Plot_Name, by = crown_fac, bs = 're', k = 10) + 
+                            # each plot/crown combination has its own intercept
+                          s(year_fac, by = crown_fac, bs = 're', k = 100),
+                            # each year/crown combination has its own intercept,
+                data = piru, method = "REML")
+saveRDS(gam_piru3, "gam_piru3.rds")
+summary(gam_piru3)
+gam_piru3$call
+summary(gam_piru2)
+
+# Look into https://asbates.rbind.io/2019/05/03/gams-for-time-series/ 
+# on corARMA for checking/dealing with temporal correlation
+
+k.check(gam_piru2) #looks ok
+appraise(gam_piru2) #not bad? less variance in tails b/c fewer samples
+gratia::draw(gam_piru2, residuals = T, rug = T)
+draw(gam_piru2)
 #str(gam_piru)
 summary(gam_piru)
 summary(gam_piru1)
 
+gam_piru3$call
+gam_piru3$terms
 
 gam_piru <- gam(logBAI ~ s(Year, by = crown_fac, k = 50) + 
                            northiness + 
