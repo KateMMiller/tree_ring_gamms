@@ -7,14 +7,13 @@ library(readxl)
 library(sf) # for extracting elevation from forest plot shapefile
 library(mgcv) # for imputing missing deposition data via gams
 library(zoo)
-
+library(stars) # for extracting spei data
+library(lubridate)
+library(prism)
+#library(raster)
 importData()
 
-#++++++++++++ NEXT STEPS 20240124 +++++++++++#
-# Figure out whether to do a rolling 5-year average for climate and atm dep metrics,
-# or a 5-year lag
-# Also lag all climate variables by 1 year
-# Rolling average will take into account previous and current year
+# ADD RRWs and see if results differ
 
 #---- Compile data that have 1 record for each plot ----
 #------ Plot-level data, including XY coords ------
@@ -77,23 +76,31 @@ head(full_plot_data)
 
 #---- Compile data with 1 row per year in each core ----
 #------ Core meta data ------
-acad_core_meta <- read_excel("C:/NETN/collaborators/Schaberg/Core_Data/ACAD_tree_core_data_2013-2021.xlsx") %>% 
+acad_core_meta1 <- read_excel(
+  "C:/NETN/collaborators/Schaberg/Core_Data/ACAD_tree_core_data_2013-2021.xlsx") %>% 
   arrange(coreID) %>% select(Plot_Name, coreID, Species, Crown_Class, DBH, est_age = `estimated #_Rings_USFS`)
 
-head(acad_core_meta)
-length(unique(acad_core_meta$Plot_Name)) #149
-length(unique(acad_core_meta$coreID)) # 352
+head(acad_core_meta1)
+length(unique(acad_core_meta1$Plot_Name)) #149 plots, missing ones appear to me M-A-R
+length(unique(acad_core_meta1$coreID)) # 447
+table(acad_core_meta1$Plot_Name)
 
-table(acad_core_meta$Species) # all spelled correctly
+table(acad_core_meta1$Species) # all spelled correctly
 
-acad_core_meta$DBH[acad_core_meta$DBH == "NA"] <- NA
-acad_core_meta$DBH_num <- as.numeric(acad_core_meta$DBH)
+acad_core_meta1$DBH[acad_core_meta1$DBH == "NA"] <- NA
+acad_core_meta1$DBH_num <- as.numeric(acad_core_meta1$DBH)
+
+# Add Long/lat to dataset
+acad_core_meta <- left_join(acad_core_meta1, 
+                         VIEWS_NETN$Plots_NETN |> select(Plot_Name, Lat, Long), 
+                         by = "Plot_Name")
 
 #------ Read in and compile ring width data ------
-path = "C:/NETN/collaborators/Schaberg/Acadia increment core data.xlsx"
+path = "C:/NETN/collaborators/Schaberg/Acadia increment core data 20240228.xlsx"
 BAI <- excel_sheets(path)[grep("BAI", excel_sheets(path))]
 RRW <- excel_sheets(path)[grep("RRW", excel_sheets(path))]
 
+# Basal Area Increment Data
 BAI_data <- BAI %>% map_dfr(function(sheet){
                 df = read_xlsx(path = path, sheet = sheet) %>% #mutate(species = substr(sheet, 1, 4)) %>% 
                      select(Year, everything())
@@ -114,8 +121,34 @@ BAI_check <- BAI_comb |> group_by(Plot_Name, coreID) |>
 sum(BAI_check$missing) #7 cores missing from acad_core_meta
 
 table(BAI_comb$Crown_Class, useNA = 'always')
+table(BAI_comb$Year)
+
+# Raw ring width data
+RRW_data <- RRW %>% map_dfr(function(sheet){
+  df = read_xlsx(path = path, sheet = sheet) %>% #mutate(species = substr(sheet, 1, 4)) %>% 
+    select(Year, everything())
+  df_long <- df %>% pivot_longer(-Year, names_to = 'coreID', values_to = 'RRWmm') %>% 
+    mutate(species = substr(sheet, 1, 4))
+}) %>% filter(!is.na(RRWmm)) %>% arrange(coreID, Year)
+
+length(unique(RRW_data$coreID)) #420
+
+# link ring width data to tree core metadata
+RRW_comb <- left_join(RRW_data, acad_core_meta |> select(-DBH), by = "coreID")
+head(RRW_data)
+
+RRW_check <- RRW_comb |> group_by(Plot_Name, coreID) |> 
+  summarize(missing1 = sum(ifelse(is.na(DBH_num), 1, 0)), 
+            missing = ifelse(missing1 > 0, 1, 0)) 
+
+sum(RRW_check$missing) #9 cores missing from acad_core_meta
+
+table(RRW_comb$Crown_Class, useNA = 'always')
+
+write.csv(RRW_data, "./data/RRW_tree_data_long.csv", row.names = F)
 
 # Include measure of competition following Salas-Eljatib & Weiskittel. 2020. 10.1016/j.foreco.2020.118369.
+# Using 2015-2018 because that covers most cores
 trees <- joinTreeData(from = 2015, to = 2018, status = 'live') |> 
   select(Plot_Name, BA_cm2, DBHcm)
 
@@ -135,18 +168,40 @@ BAI_tree <- BAI_tree2 |>
 BAI_comb2 <- left_join(BAI_comb, BAI_tree, by = c("coreID", "species", "Plot_Name", "Crown_Class", "est_age"))
 
 write.csv(BAI_comb2, "./data/BAI_tree_data_long.csv", row.names = F)
+intersect(names(BAI_comb2), names(RRW_comb))
+bai_rrw_comb <- left_join(BAI_comb2, RRW_comb, by = c("Year", "coreID", "species", "Plot_Name",
+                                                      "Species", "Crown_Class", "est_age", "DBH_num"))
 
-RRW_data <- RRW %>% map_dfr(function(sheet){
-  df = read_xlsx(path = path, sheet = sheet) %>% #mutate(species = substr(sheet, 1, 4)) %>% 
-    select(Year, everything())
-  df_long <- df %>% pivot_longer(-Year, names_to = 'coreID', values_to = 'RRWmm') %>% 
-    mutate(species = substr(sheet, 1, 4))
-}) %>% filter(!is.na(RRWmm)) %>% arrange(coreID, Year)
+bai_rrw_comb$Crown_Class[bai_rrw_comb$Crown_Class == "Codom"] <- "3"
+bai_rrw_comb$Crown_Class[bai_rrw_comb$Crown_Class == "Inter"] <- "4"
+bai_rrw_comb$Crown_Class[bai_rrw_comb$Crown_Class == "Open Grown"] <- "1"
 
-write.csv(RRW_data, "./data/RRW_tree_data_long.csv", row.names = F)
+table(bai_rrw_comb$Crown_Class)
+
+write.csv(bai_rrw_comb, "./data/BAI_RRW_data_long.csv", row.names = F)
 
 #------ Read in climate data ------
 # PRISM
+# Annoyingly, PRISM makes you set the WD to download to the folder you want
+orig_wd <- getwd()
+prismfile <- ("./data/prism")
+setwd(prismfile)
+options(prism.path = getwd())
+
+get_prism_monthlys("ppt", years = 1974:2022, mon = 1:12)
+get_prism_monthlys("tmin", years = 1974:2022, mon = 1:12)
+get_prism_monthlys("tmax", years = 1974:2022, mon = 1:12)
+
+#+++++++++ ENDED HERE ++++++++++
+# Once downloaded extract values for each forest plot location to get to
+# the metrics by month I originally used to calculate rolling avgs and lags.
+# A site with useful examples: 
+    # https://tmieno2.github.io/R-as-GIS-for-Economists/download-prism.html 
+    # Also C:\NETN\R_Dev\RFI_regen_trends\scripts.R
+
+setwd(orig_wd)
+
+
 prism <- read.csv("C:/NETN/collaborators/Schaberg/PRISM_simp.csv") %>% 
   mutate(Year = as.numeric(substr(Date, 1, 4)),
          month = as.numeric(substr(Date, 6, 7))) %>% 
@@ -154,9 +209,51 @@ prism <- read.csv("C:/NETN/collaborators/Schaberg/PRISM_simp.csv") %>%
          tmeanC = tmean..degrees.C., tmaxC = tmax..degrees.C.) %>% 
   pivot_wider(names_from = month, values_from = c(ppt_mm, tminC, tmeanC, tmaxC))
 
-# SPEI
-spei <- read.csv("C:/NETN/collaborators/Schaberg/ACAD_SPEI_thru2018.csv") %>% 
-  pivot_wider(names_from = Month, values_from = c(SPEI01, SPEI03))
+# SPEI 
+# download nc datasets from web:
+#   https://spei.csic.es/spei_database/#map_name=spei01#map_position=1463
+# URL for SPEI01
+
+# list of ACAD plots
+plots <- data.frame(loc = VIEWS_NETN$Plots_NETN$Plot_Name, 
+                    long = VIEWS_NETN$Plots_NETN$Long,
+                    lat = VIEWS_NETN$Plots_NETN$Lat) |> 
+  filter(grepl("ACAD", loc))
+
+# Function to crop and extract values for ACAD plots
+extract_spei <- function(spei){
+  ras <- read_stars(paste0("./data/spei_nc/", spei, ".nc"))
+  plots_sf <- st_as_sf(plots, coords = c("long", "lat"), crs = 4326)
+  bbox <- st_bbox(plots_sf)#xmin: -71.32181 ymin: 42.45675 xmax: -68.0704 ymax: 44.40183
+  spei_crop <- st_crop(ras, bbox)
+  names(spei_crop) <- "spei"
+  spei_ex <- st_extract(spei_crop, plots_sf)
+  spei_df <- as.data.frame(spei_ex, xy = T)
+  spei_df$long <- st_coordinates(spei_df$geometry)[,1]
+  spei_df$lat <- st_coordinates(spei_df$geometry)[,2]
+  spei_yr <- spei_df |> filter(time >= "1974-01-01") # make dataset smaller
+  spei_plots <- left_join(spei_yr, plots, by = c("long", "lat")) |> 
+    mutate(year = year(time), month = month(time),
+           value = as.numeric(spei)) |> 
+    select(Plot_Name = loc, long, lat, value, year, month)  
+  
+  spei_wide <- spei_plots |> 
+    pivot_wider(names_from = month, values_from = value,
+                names_prefix = paste0(toupper(spei), "_"))
+}
+
+spei01 <- extract_spei("spei01")
+spei02 <- extract_spei("spei02")
+spei03 <- extract_spei("spei03")
+spei06 <- extract_spei("spei06")
+spei12 <- extract_spei("spei12")
+spei36 <- extract_spei("spei36")
+
+spei_list <- list(spei01, spei02, spei03, spei06, spei12, spei36)
+spei_all <- purrr::reduce(spei_list, full_join, 
+                          by = c("Plot_Name", "long", "lat", "year"))
+
+write.csv(spei_all, "./data/ACAD_SPEI_1974-2022.csv", row.names = F)
 
 climate_comb <- full_join(prism, spei, by = "Year")
 table(climate_comb$Year)
@@ -219,7 +316,7 @@ dep_complete <- dep[complete.cases(dep),]
 dep_final <- rbind(dep_complete, depNAs) %>% arrange(Year)
 
 #---- Combine climate and core BAI data ----
-core_comb <- BAI_comb2 %>% filter(!is.na(Year))
+core_comb <- bai_rrw_comb %>% filter(!is.na(Year))
 head(BAI_comb2)
 length(unique(core_comb$coreID)) #420
 
@@ -228,7 +325,7 @@ core_clim <- full_join(core_comb, climate_comb, by = 'Year') %>%
   filter(!is.na(Plot_Name)) # drops years with climate data but no cores
 
 core_clim_dep <- full_join(core_clim, dep_final, by = "Year")
-
+names(core_clim_dep)
 #---- Combine 9-month SPI 1895-present for Hancock County from drought.gov
 drt <- read.csv("./data/Hancock_Cty_9mo_SPI-23009_1895-2023.csv")
 drt <- drt |> mutate(year = as.numeric(substr(DATE, 3, 6)),
@@ -268,22 +365,23 @@ plot_core_clim <- full_join(full_plot_data, core_clim_dep2 |> select(-DBH_orig),
   filter(!is.na(coreID)) %>% data.frame()
 
 table(complete.cases(plot_core_clim)) # 562 F, from Dep data that starts at 1984
-head(plot_core_clim)
-
 names(plot_core_clim)
+
 write.csv(plot_core_clim, "./data/Full_plot_core_climate_deposition_dataset.csv", row.names = F)
 
-plot_core_clim <- read.csv("./data/Full_plot_core_climate_deposition_dataset.csv")
+#plot_core_clim <- read.csv("./data/Full_plot_core_climate_deposition_dataset.csv")
 
 # this is a working dataset for the gam as of 2022. 
 
 # Now to add rolling averages and lags
-names(plot_core_clim)
+head(plot_core_clim)
+table(plot_core_clim$Crown_Class)
 
 core_simp <- plot_core_clim |> 
   mutate(pcID = paste0(Plot_Name, "_", coreID)) |> 
   select(pcID, Plot_Name, ParkSubUnit, coreID, Year, 
-         xCoordinate:fire1947, BAIcm2:BA_pct_lg,
+         BAIcm2, RRWmm,
+         xCoordinate:fire1947, species:BA_pct_lg,
          tmaxC_4:tmaxC_9,
          tminC_1:tminC_3, tminC_10:tminC_12,
          SPEI03_6:SPEI03_9, NO3:pct_W2_W4) |> 
@@ -348,25 +446,8 @@ core_rolls <- cbind(core_simp,
 
 core_lagrolls <- cbind(core_rolls, purrr::map_dfc(vars, ~lag_fun(dat = core_rolls, ., 1)))
 
-head(core_lagrolls)
+names(core_lagrolls)
+table(core_lagrolls$Crown_Class)
+table(core_lagrolls$Year) #1975 to 2020
 write.csv(core_lagrolls, "./data/core_data_all_lagrolls_20240223.csv", row.names = F)
-
-# Check that things roughly make rough sense (ie the joins were correct)
-ggplot(plot_core_clim, aes(x = SPEI03_7, y = BAIcm2)) +
-       geom_point()+
-       geom_smooth()
-       
-ggplot(plot_core_clim, aes(x = BaseSat, y = BAIcm2)) +
-  geom_point()+
-  geom_smooth()
-
-ggplot(plot_core_clim, aes(x = northiness, y = BAIcm2)) +
-  geom_point()+
-  geom_smooth()
-
-ggplot(plot_core_clim, aes(x = soilpH, y = BAIcm2)) +
-  geom_point()+
-  geom_smooth()
-
-
 
