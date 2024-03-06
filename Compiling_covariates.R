@@ -11,6 +11,7 @@ library(stars) # for extracting prism and spei data
 library(starsExtra) # for nearest neighbor fixes
 library(lubridate)
 library(prism)
+library(daymetr)
 
 importData()
 
@@ -214,7 +215,7 @@ yearmos <- paste0(yearmos_vec, collapse = "|")
 # yearmos then can filter out the year only .bil
 
 # Function to compile/extract prism values for each forest plot
-type = 'ppt'; year = 1980; month = 4
+#type = 'ppt'; year = 1980; month = 4
 
 comb_prism_year <- function(type, year, month){
   files <- all_files[!grepl(".zip", all_files) & grepl(type, all_files)]
@@ -236,58 +237,93 @@ comb_prism_year <- function(type, year, month){
   neigh <- st_nearest_feature(miss, acad_comp)
   neigh_plots <- st_join(miss |> select(Plot_Name_miss = Plot_Name, geometry), 
                          acad_comp, join = st_nearest_feature)
-  plots_final <- rbind(acad_comp, 
-                       neigh_plots |> select(Plot_Name = Plot_Name_miss, all_of(col),
-                                             geometry)) |> arrange(Plot_Name)
   
-  plots_final
+  
+  plots_comb <- rbind(acad_comp |> st_drop_geometry(), 
+                       neigh_plots |> select(Plot_Name = Plot_Name_miss, all_of(col)) |> 
+                         st_drop_geometry()) |> 
+                       arrange(Plot_Name)
+  
+  plots_final <- plots_comb[!is.na(plots_comb$Plot_Name),]
+  
   return(data.frame(plots_final))
 }
 
 # For plots located on grid cells without prism data, take nearest neighbor value.
 
-ppt1 <- comb_prism_year(type = 'ppt', year = 1974, month = 4)
-
-head(ppt1)
-
 ppt <- 
 purrr::map_dfr(1974:2022, function(yr){
-  comb_prism_year(type = 'ppt', year = yr, month = 1:12) |> mutate(year =  yr) |> 
-    select(-geometry)
+  comb_prism_year(type = 'ppt', year = yr, month = 1:12) |> mutate(year = yr)
 })
+
+# test <- comb_prism_year(type = 'ppt', year = 1975, month = 1:12)
+# View(test)
+length(1974:2022) * 176 
+
+head(ppt)
 
 write.csv(ppt, "./data/ppt_new_approach.csv", row.names = F)
 
 tmin <- 
   purrr::map_dfr(1974:2022, function(yr){
-    comb_prism_year(type = 'tmin', year = yr, month = 1:12) |> mutate(year =  yr) |> 
-      select(-geometry)
+    comb_prism_year(type = 'tmin', year = yr, month = 1:12) |> mutate(year =  yr) 
   })
 
 write.csv(tmin, "./data/tmin_new_approach.csv", row.names = F)
 
 tmax <- 
   purrr::map_dfr(1974:2022, function(yr){
-    comb_prism_year(type = 'tmax', year = yr, month = 1:12) |> mutate(year =  yr) |> 
-      select(-geometry)
+    comb_prism_year(type = 'tmax', year = yr, month = 1:12) |> mutate(year =  yr) 
   })
 
 write.csv(tmax, "./data/tmax_new_approach.csv", row.names = F)
 
-head(ppt)
-head(tmin)
-head(tmax)
 clims <- list(ppt, tmin, tmax)
 prism_comb <- reduce(clims, left_join, by = c("Plot_Name", "year"))
 
-names(prism_comb)
-prism_sf <- left_join(acad_sf, prism_comb, by = "Plot_Name") 
+write.csv(prism_comb, "./data/prism_data_comb.csv", row.names = F)
 
-prism_miss <- prism_comb |> filter(is.na(ppt_01)) |> select(Plot_Name) |> unique()
+# DayMet data
+acad_daymet_df <- acadplots |> select(site = Plot_Name, latitude = lat, longitude = long)
+write.csv(acad_daymet_df, "./data/acadplots_for_daymet.csv", row.names = F)
 
+# batch download data for each plot
+# download_daymet_batch(file_location = "./data/acadplots_for_daymet.csv",
+#                       start = 1980, 
+#                       end = 2022, 
+#                       path = "./data/daymet",
+#                       simplify = TRUE,
+#                       internal = FALSE)
 
-# fill missing values with nearest neighbor
+# read in and combine the data into 1 large data frame
+# need to iterate reading in the files, drop the deader text on the top, and make data wide by month
+comb_daymet <- function(plot){
 
+  df <- read.table(paste0("./data/daymet/", plot, "_1980_2022.csv"), 
+                   sep = ",", skip = 7, header = T) |> 
+    mutate(Plot_Name = "ACAD-001") |> select(Plot_Name, everything())
+
+  colnames(df) <- c("Plot_Name", "year", "yday", "dayls", 'ppt', 'srad', 'swe', 'tmax', 'tmin', 'vp')
+  df_sum <- df |> mutate(date = as.Date(yday-1, origin = "1980-01-01"),
+                             month = month(date)) |> 
+    group_by(Plot_Name, year, month) |> 
+    summarise(dm_ppt_sum = sum(ppt, na.rm = T),
+              dm_no_ppt_days = sum(ppt < 0.1),
+              dm_tmax = max(tmax, na.rm = T),
+              dm_tmin = min(tmin, na.rm = T),
+              dm_vpmax = max(vp, na.rm = T),
+              dm_vpavg = mean(vp, na.rm = T), 
+              .groups = 'drop')
+
+ df_wide <- df_sum |> pivot_wider(names_from = month, 
+                                  values_from = c(dm_ppt_sum, dm_no_ppt_days, 
+                                                  dm_tmax, dm_tmin, dm_vpmax, dm_vpavg))
+return(df_wide)
+}
+
+plots <- sort(unique(acadplots$Plot_Name)) 
+daymet_comb <- map_dfr(plots, ~comb_daymet(.))
+write.csv(daymet_comb, "./data/daymet_climate_data_1980_2022.csv")
 
 # prism <- read.csv("C:/NETN/collaborators/Schaberg/PRISM_simp.csv") %>%
 #   mutate(Year = as.numeric(substr(Date, 1, 4)),
