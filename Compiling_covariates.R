@@ -7,15 +7,14 @@ library(readxl)
 library(sf) # for extracting elevation from forest plot shapefile
 library(mgcv) # for imputing missing deposition data via gams
 library(zoo)
-library(stars) # for extracting spei data
+library(stars) # for extracting prism and spei data
+library(starsExtra) # for nearest neighbor fixes
 library(lubridate)
 library(prism)
-#library(raster)
+
 importData()
 
-# ADD RRWs and see if results differ
-
-#---- Compile data that have 1 record for each plot ----
+#---- Compile NETN forest data to have 1 record for each plot ----
 #------ Plot-level data, including XY coords ------
 plot_info <- joinLocEvent(park = "ACAD", from = 2018, to = 2021) %>% 
   select(Plot_Name, ParkSubUnit, xCoordinate, yCoordinate, PhysiographySummary, Aspect)
@@ -55,7 +54,7 @@ forest_plots <- st_read("C:/NETN/Monitoring_Projects/Forest_Health/Forest_plots_
 forest_plots_df <- data.frame(forest_plots) %>% mutate(Plot_Name = paste0("ACAD-", Plot)) %>% 
                    select(Plot_Name, Group_1, elev_m = RASTERVALU, fire47 = X1947_fire)
 
-#---- Combine plot-level data sets ----
+#---- Combine NETN plot-level data sets ----
 full_plot_data <- purrr::reduce(list(plot_info, forest_plots_df, stand_info, trees, soil_info_fix), 
                                 left_join, by = "Plot_Name") %>% 
              # Convert aspect to something usable
@@ -72,7 +71,6 @@ full_plot_data <- purrr::reduce(list(plot_info, forest_plots_df, stand_info, tre
 full_plot_data$fire1947[is.na(full_plot_data$fire1947)] <- 0
 
 table(complete.cases(full_plot_data)) #176 TRUE
-head(full_plot_data)
 
 #---- Compile data with 1 row per year in each core ----
 #------ Core meta data ------
@@ -180,51 +178,132 @@ table(bai_rrw_comb$Crown_Class)
 
 write.csv(bai_rrw_comb, "./data/BAI_RRW_data_long.csv", row.names = F)
 
-#------ Read in climate data ------
-# PRISM
+#---- Read in and compile climate data ----
+# list of ACAD plots
+acadplots <- VIEWS_NETN$Plots_NETN |> filter(ParkUnit == "ACAD") |> 
+  select(Plot_Name, long = Long, lat = Lat)
+
+acad_sf <- st_as_sf(acadplots, coords = c("long", "lat"), crs = 4326)
+
+bndbox <- st_as_sfc(st_bbox(acad_sf)) #xmin: -74.56284 ymin: 40.74542 xmax: -68.0704 ymax: 44.40644
+
+# ggplot(acad_sf) + 
+#   geom_sf(color = 'red', alpha = 0.2) + 
+#   theme_bw() #+ geom_sf(data  = bndbox, fill = NA)
+
+#------ PRISM ------
 # Annoyingly, PRISM makes you set the WD to download to the folder you want
-orig_wd <- getwd()
-prismfile <- ("./data/prism")
-setwd(prismfile)
-options(prism.path = getwd())
+# Commented out because only have to run it once to download
+# orig_wd <- getwd()
+# prismfile <- ("./data/prism")
+# setwd(prismfile)
+# options(prism.path = getwd())
+# get_prism_monthlys("ppt", years = 1974:2022, mon = 1:12)
+# get_prism_monthlys("tmin", years = 1974:2022, mon = 1:12)
+# get_prism_monthlys("tmax", years = 1974:2022, mon = 1:12)
+# setwd(orig_wd)
 
-get_prism_monthlys("ppt", years = 1974:2022, mon = 1:12)
-get_prism_monthlys("tmin", years = 1974:2022, mon = 1:12)
-get_prism_monthlys("tmax", years = 1974:2022, mon = 1:12)
+options(prism.path = "./data/prism/")
+all_files <- list.files("./data/prism/") 
+# Set up vectors to filter and iterate on
+years <- 1974:2022
+mos <- c("01", "02", "03", "04" ,"05", "06", 
+         "07", "08", "09", "10", "11", "12")
+yearmos_vec <- paste0(rep(years, each = 12), rep(mos, times = length(years)))
+yearmos <- paste0(yearmos_vec, collapse = "|")
+# yearmos then can filter out the year only .bil
 
-#+++++++++ ENDED HERE ++++++++++
-# Once downloaded extract values for each forest plot location to get to
-# the metrics by month I originally used to calculate rolling avgs and lags.
-# A site with useful examples: 
-    # https://tmieno2.github.io/R-as-GIS-for-Economists/download-prism.html 
-    # Also C:\NETN\R_Dev\RFI_regen_trends\scripts.R
+# Function to compile/extract prism values for each forest plot
+type = 'ppt'; year = 1980; month = 4
 
-setwd(orig_wd)
+comb_prism_year <- function(type, year, month){
+  files <- all_files[!grepl(".zip", all_files) & grepl(type, all_files)]
+  year_files <- files[grepl(year, files)]
+  mos <- year_files[grepl(yearmos, year_files)]
+  
+  ras1 <- read_stars(paste0("./data/prism/", mos[month], "/", mos[month], ".bil"))
+  bbox2 <- st_transform(bndbox, crs = st_crs(ras1))
+  ras1b <- st_crop(ras1, bbox2)
+  
+  plots_ras <- cbind(acad_sf, st_extract(ras1b, st_coordinates(acad_sf)))
+  col <-  paste0(type, "_", str_pad(month, 2, "0", side = 'left'))
+  cols <- c("Plot_Name", col, "geometry")
+  colnames(plots_ras) <- cols
+  
+  # Take nearest neighbor value for plots missing values
+  miss <- st_transform(plots_ras[is.na(plots_ras[,col]),], crs = st_crs(acad_sf))
+  acad_comp <- plots_ras |> filter(!Plot_Name %in% miss$Plot_Name)
+  neigh <- st_nearest_feature(miss, acad_comp)
+  neigh_plots <- st_join(miss |> select(Plot_Name_miss = Plot_Name, geometry), 
+                         acad_comp, join = st_nearest_feature)
+  plots_final <- rbind(acad_comp, 
+                       neigh_plots |> select(Plot_Name = Plot_Name_miss, all_of(col),
+                                             geometry)) |> arrange(Plot_Name)
+  
+  plots_final
+  return(data.frame(plots_final))
+}
+
+# For plots located on grid cells without prism data, take nearest neighbor value.
+
+ppt1 <- comb_prism_year(type = 'ppt', year = 1974, month = 4)
+
+head(ppt1)
+
+ppt <- 
+purrr::map_dfr(1974:2022, function(yr){
+  comb_prism_year(type = 'ppt', year = yr, month = 1:12) |> mutate(year =  yr) |> 
+    select(-geometry)
+})
+
+write.csv(ppt, "./data/ppt_new_approach.csv", row.names = F)
+
+tmin <- 
+  purrr::map_dfr(1974:2022, function(yr){
+    comb_prism_year(type = 'tmin', year = yr, month = 1:12) |> mutate(year =  yr) |> 
+      select(-geometry)
+  })
+
+write.csv(tmin, "./data/tmin_new_approach.csv", row.names = F)
+
+tmax <- 
+  purrr::map_dfr(1974:2022, function(yr){
+    comb_prism_year(type = 'tmax', year = yr, month = 1:12) |> mutate(year =  yr) |> 
+      select(-geometry)
+  })
+
+write.csv(tmax, "./data/tmax_new_approach.csv", row.names = F)
+
+head(ppt)
+head(tmin)
+head(tmax)
+clims <- list(ppt, tmin, tmax)
+prism_comb <- reduce(clims, left_join, by = c("Plot_Name", "year"))
+
+names(prism_comb)
+prism_sf <- left_join(acad_sf, prism_comb, by = "Plot_Name") 
+
+prism_miss <- prism_comb |> filter(is.na(ppt_01)) |> select(Plot_Name) |> unique()
 
 
-prism <- read.csv("C:/NETN/collaborators/Schaberg/PRISM_simp.csv") %>% 
-  mutate(Year = as.numeric(substr(Date, 1, 4)),
-         month = as.numeric(substr(Date, 6, 7))) %>% 
-  select(Year, month, ppt_mm = ppt..mm., tminC = tmin..degrees.C., 
-         tmeanC = tmean..degrees.C., tmaxC = tmax..degrees.C.) %>% 
-  pivot_wider(names_from = month, values_from = c(ppt_mm, tminC, tmeanC, tmaxC))
+# fill missing values with nearest neighbor
 
-# SPEI 
+
+# prism <- read.csv("C:/NETN/collaborators/Schaberg/PRISM_simp.csv") %>%
+#   mutate(Year = as.numeric(substr(Date, 1, 4)),
+#          month = as.numeric(substr(Date, 6, 7))) %>%
+#   select(Year, month, ppt_mm = ppt..mm., tminC = tmin..degrees.C.,
+#          tmeanC = tmean..degrees.C., tmaxC = tmax..degrees.C.) %>%
+#   pivot_wider(names_from = month, values_from = c(ppt_mm, tminC, tmeanC, tmaxC))
+
+#------ SPEI ------
 # download nc datasets from web:
 #   https://spei.csic.es/spei_database/#map_name=spei01#map_position=1463
 # URL for SPEI01
 
-# list of ACAD plots
-plots <- data.frame(loc = VIEWS_NETN$Plots_NETN$Plot_Name, 
-                    long = VIEWS_NETN$Plots_NETN$Long,
-                    lat = VIEWS_NETN$Plots_NETN$Lat) |> 
-  filter(grepl("ACAD", loc))
-
 # Function to crop and extract values for ACAD plots
 extract_spei <- function(spei){
   ras <- read_stars(paste0("./data/spei_nc/", spei, ".nc"))
-  plots_sf <- st_as_sf(plots, coords = c("long", "lat"), crs = 4326)
-  bbox <- st_bbox(plots_sf)#xmin: -71.32181 ymin: 42.45675 xmax: -68.0704 ymax: 44.40183
   spei_crop <- st_crop(ras, bbox)
   names(spei_crop) <- "spei"
   spei_ex <- st_extract(spei_crop, plots_sf)
@@ -260,7 +339,7 @@ table(climate_comb$Year)
 
 write.csv(climate_comb, "./data/PRISM_SPEI_wide.csv", row.names = F)
 
-#----- Read in deposition data -----
+#---- Read in deposition data ----
 dep <- read.csv("C:/NETN/collaborators/Schaberg/NTN-me98-annual-mgl.csv") %>% select(Year = yr, NO3, SO4, pH)
 dep$NO3[dep$NO3 == -9.0] <- NA
 dep$SO4[dep$SO4 == -9.0] <- NA
@@ -449,5 +528,5 @@ core_lagrolls <- cbind(core_rolls, purrr::map_dfc(vars, ~lag_fun(dat = core_roll
 names(core_lagrolls)
 table(core_lagrolls$Crown_Class)
 table(core_lagrolls$Year) #1975 to 2020
-write.csv(core_lagrolls, "./data/core_data_all_lagrolls_20240223.csv", row.names = F)
+write.csv(core_lagrolls, "./data/core_data_all_lagrolls_20240305.csv", row.names = F)
 
