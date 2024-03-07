@@ -302,7 +302,8 @@ comb_daymet_by_mon <- function(plot){
                    sep = ",", skip = 7, header = T) |> 
     mutate(Plot_Name = plot) |> select(Plot_Name, everything())
 
-  colnames(df) <- c("Plot_Name", "year", "yday", "dayls", 'ppt', 'srad', 'swe', 'tmax', 'tmin', 'vp')
+  colnames(df) <- c("Plot_Name", "year", "yday", "dayls", 'ppt', 
+                    'srad', 'swe', 'tmax', 'tmin', 'vp')
   df_sum <- df |> mutate(date = as.Date(yday-1, origin = "1980-01-01"),
                              month = month(date)) |> 
     group_by(Plot_Name, year, month) |> 
@@ -310,14 +311,18 @@ comb_daymet_by_mon <- function(plot){
               dm_no_ppt_days = sum(ppt < 0.1),
               dm_srad_mjm2 = mean((srad*dayls)/1000000),
               dm_tmax = max(tmax, na.rm = T),
+              dm_tmax_mean = mean(tmax, na.rm = T),
               dm_tmin = min(tmin, na.rm = T),
+              dm_tmin_mean = mean(tmin, na.rm = T),
               dm_vpmax = max(vp, na.rm = T),
               dm_vpavg = mean(vp, na.rm = T), 
               .groups = 'drop')
 
  df_wide <- df_sum |> pivot_wider(names_from = month, 
                                   values_from = c(dm_ppt_sum, dm_no_ppt_days, dm_srad_mjm2,
-                                                  dm_tmax, dm_tmin, dm_vpmax, dm_vpavg))
+                                                  dm_tmax, dm_tmax_mean, 
+                                                  dm_tmin, dm_tmin_mean,
+                                                  dm_vpmax, dm_vpavg))
 return(df_wide)
 }
 
@@ -328,6 +333,64 @@ daymet_comb <- map_dfr(plots, ~comb_daymet_by_mon(.))
 nrow(daymet_comb) == length(1980:2022) * 176 # 7586; TRUE
 daymet_final <- inner_join(acadplots, data.frame(daymet_comb), by = "Plot_Name")
 write.csv(daymet_final, "./data/daymet_climate_data_1980_2022.csv")
+
+#---- Weather Station Data for comparisons -----
+#devtools::install_github("nationalparkservice/EnvironmentalSetting_Toolkit/ES_Toolkit_R")
+
+library(rnoaa)
+comp_daily <- function(yr, type){
+  start = paste0(yr, "-01-01")
+  end = paste0(yr, "-12-31")
+  
+  dailyt <- ncdc(datasetid = "GHCND", 
+                 stationid = "GHCND:USR0000MMCF", 
+                 startdate = start, 
+                 enddate = end,
+                 datatypeid = type,
+                 token = "WxxhgwxLsEgyPNZEeSrVftJPWHThbfRc")
+  daily <- dailyt$data
+  
+  ws_tmon <- dailyt |> mutate(date = as.Date(date, "%Y-%m-%d"),
+                              month = month(date),
+                              year = year(date)) |>
+    select(date, datatype, value, month, year) |>
+    pivot_wider(names_from = datatype, values_from = value) |>
+    group_by(year, month) |>
+    summarize(ws_tmax = max(TMAX, na.rm = T),
+              ws_tmax_mean = mean(TMAX, na.rm = T),
+              ws_tmin = min(TMIN, na.rm = T),
+              ws_tmin_mean = mean(TMIN, na.rm = T),
+              ws_tmean = mean(TAVG, na.rm = T),
+              .groups = 'drop')
+  return(ws_tmon)
+}
+
+years <- c(2003:2022)
+test <- comp_daily(2003, type = "TMIN")
+head(test)
+
+ws_tmonthly <- map_dfr(years, ~comp_daily(.))
+table(ws_tmonthly$year, ws_tmonthly$month)
+head(ws_tmonthly)  
+
+
+#prec <- wetlandACAD::get_NADP_precip(start_date = "01/01/2008", end_date = "12/31/2022")
+head(prec)
+
+ws_pmon <- prec |> mutate(date = as.Date(Date, "%Y-%m-%d"),
+                          month = month(date),
+                          year = year(date),
+                          prec_mm = precip_cm/10) |> 
+  select(date, year, month, hour, precip_cm) |>
+  group_by(year, month) |> 
+  summarize(ws_prec = sum(precip_cm),
+            .groups = 'drop')
+head(ws_pmon)
+
+ws_comb <- left_join(ws_tmonthly, ws_pmon, by = c("year", "month"))
+head(ws_comb)
+
+write.csv(ws_comb, "MARS_weather_station_data_2003-2022.csv", row.names = F)
 
 #------ SPEI ------
 #-- SPEI by hand using dayment data --
@@ -342,7 +405,8 @@ comb_daymet_long <- function(plot){
     select(Plot_Name, everything())
   
   names(dat)
-  colnames(dat) <- c("Plot_Name", "year", "yday", "dayls", 'ppt', 'srad', 'swe', 'tmax', 'tmin', 'vp',
+  colnames(dat) <- c("Plot_Name", "year", "yday", "dayls", 'ppt', 
+                     'srad', 'swe', 'tmax', 'tmin', 'vp',
                      'origin', 'date', 'month')
   dat$srad_mjm2 <- (dat$srad * dat$dayls/1000000)
   dat2 <- inner_join(acadplots, dat, by = "Plot_Name")
@@ -354,7 +418,9 @@ dm_comb <- map_dfr(plots, ~comb_daymet_long(.))
 dm_month <- dm_comb |> group_by(Plot_Name, year, month) |> 
   summarize(lat = first(lat),
             tmax = max(tmax),
+            tmax_mean = mean(tmax),
             tmin = min(tmin),
+            tmin_mean = mean(tmin),
             srad = mean(srad_mjm2),
             ppt = sum(ppt), 
             .groups = 'drop')
@@ -369,18 +435,29 @@ dm_month$PEThar <- hargreaves(Tmin = dm_month$tmin,
 
 dm_month$BAL <- dm_month$ppt - dm_month$PEThar
 
-# dm_ts <- ts(dm_month[, c("lat", "ppt", "tmax", "tmin", "srad_mjm2", "PEThar", "BAL")],
-#             start = c(1980, 01, 01), end = c(2022, 12, 31), frequency = 365)
-# summary(dm_ts)
+
+dm_month$PEThar_mean <- hargreaves(Tmin = dm_month$tmin_mean,
+                                   Tmax = dm_month$tmax_mean,
+                                   lat = dm_month$lat,
+                                   Ra = dm_month$srad,
+                                   Pre = dm_month$ppt)
+
+dm_month$BAL_mean <- dm_month$ppt - dm_month$PEThar_mean
 
 SPEI_dat <- data.frame(dm_month, 
-                       SPEI01 = spei(dm_month$BAL, scale = 1)$fitted,
-                       SPEI03 = spei(dm_month$BAL, scale = 3)$fitted,
-                       SPEI06 = spei(dm_month$BAL, scale = 6)$fitted,
-                       SPEI12 = spei(dm_month$BAL, scale = 12)$fitted)
+                       dmSPEI01 = spei(dm_month$BAL, scale = 1)$fitted,
+                       dmSPEI03 = spei(dm_month$BAL, scale = 3)$fitted,
+                       dmSPEI06 = spei(dm_month$BAL, scale = 6)$fitted,
+                       dmSPEI12 = spei(dm_month$BAL, scale = 12)$fitted,
+                       dmSPEI01m = spei(dm_month$BAL_mean, scale = 1)$fitted,
+                       dmSPEI03m = spei(dm_month$BAL_mean, scale = 3)$fitted,
+                       dmSPEI06m = spei(dm_month$BAL_mean, scale = 6)$fitted,
+                       dmSPEI12m = spei(dm_month$BAL_mean, scale = 12)$fitted)
 head(SPEI_dat)
-SPEI_wide <- SPEI_dat |> select(Plot_Name, year, month, SPEI01:SPEI12) |> 
-  pivot_wider(names_from = month, values_from = c(SPEI01, SPEI03, SPEI06, SPEI12))
+SPEI_wide <- SPEI_dat |> select(Plot_Name, year, month, dmSPEI01:dmSPEI12m) |> 
+  pivot_wider(names_from = month, 
+              values_from = c(dmSPEI01, dmSPEI03, dmSPEI06, dmSPEI12,
+                              dmSPEI01m, dmSPEI03m, dmSPEI06m, dmSPEI12m))
 head(SPEI_wide)
 
 #-- Online SPEI --
@@ -390,17 +467,18 @@ head(SPEI_wide)
 
 # Function to crop and extract values for ACAD plots from the spei database
 #spei = "spei01"
+
 extract_spei <- function(spei){
   ras <- read_stars(paste0("./data/spei_nc/", spei, ".nc"))
   spei_crop <- st_crop(ras, bndbox)
   names(spei_crop) <- "spei"
   spei_ex <- st_extract(spei_crop, acad_sf)
-  spei_df <- as.data.frame(spei_ex, xy = T)
+  spei_df <- as.data.frame(spei_ex, xy = F)
   spei_df$long <- st_coordinates(spei_df$geometry)[,1]
   spei_df$lat <- st_coordinates(spei_df$geometry)[,2]
-  spei_yr <- spei_df |> filter(time >= "1974-01-01") # make dataset smaller
+  spei_yr <- spei_df |> filter(time >= "1974-01-01") |> st_drop_geometry() # make dataset smaller
   
-  spei_plots <- left_join(spei_yr, acadplots, by = c("long", "lat")) |> 
+  spei_plots <- inner_join(spei_yr, acadplots, by = c("long", "lat")) |> 
     mutate(year = year(time), month = month(time),
            value = as.numeric(spei)) |> 
     select(Plot_Name, long, lat, value, year, month)  
@@ -420,9 +498,133 @@ spei36 <- extract_spei("spei36")
 spei_list <- list(spei01, spei02, spei03, spei06, spei12, spei36)
 spei_all <- purrr::reduce(spei_list, full_join, 
                           by = c("Plot_Name", "long", "lat", "year"))
-head(SPEI_wide)
-write.csv(spei_all, "./data/ACAD_SPEI_1974-2022.csv", row.names = F)
 
+spei_all_comb <- left_join(spei_all, SPEI_wide, by = c("Plot_Name", "year")) |> 
+  filter(year >= 1980)
+
+write.csv(spei_all_comb, "./data/SPEI_db_daymet_1980-2022.csv", row.names = F)
+
+# Note SPEI 
+#   1. Not Drought > -0.5;  
+#   2. Mild = -0.5 to -1 ; 
+#   3. Moderate = -1.5 to -1;
+#   4. Severe = -2 to -1.5
+#   5. Extreme = < -2
+
+ggplot(spei_all_comb |> filter(year >= 1980), 
+       aes(x = year, y = SPEI01_7)) +
+  geom_smooth(aes(x = year, y = SPEI01_7), se = F, color = 'black') +
+  geom_smooth(aes(x = year, y = dmSPEI01_7),se = F, color = 'steelblue') +
+  # geom_smooth(aes(x = year, y = dmSPEI01m_7),se = F, color = 'forestgreen') +
+  geom_jitter(aes(y = dmSPEI01_7), color = 'lightblue', 
+              alpha = 0.5, width = 0.1) +
+  # geom_jitter(aes(y = dmSPEI01m_7), color = 'lightgreen', 
+  #             alpha = 0.5, width = 0.1) +
+  geom_point(color = 'dimgrey') + 
+  labs(x = "year", y = "SPEI comp July") + 
+  forestNETN::theme_FHM()
+
+ggplot(spei_all_comb |> filter(year >= 1980), 
+       aes(x = year, y = SPEI01_7)) +
+  geom_smooth(aes(x = year, y = SPEI01_9), se = F, color = 'black') +
+  geom_smooth(aes(x = year, y = dmSPEI01_9),se = F, color = 'steelblue') +
+  geom_jitter(aes(y = dmSPEI01_7), color = 'lightblue', 
+              alpha = 0.5, width = 0.1) +
+  geom_point(color = 'dimgrey') + 
+  labs(x = "year", y = "SPEI comp Sept") + 
+  forestNETN::theme_FHM()
+
+ggplot(spei_all_comb |> filter(year == 2021), 
+       aes(x = Plot_Name, y = SPEI03_8)) + 
+  geom_point(color = "grey") +
+  geom_point(aes(y = dmSPEI03_8), color = "forestgreen")+
+  forestNETN::theme_FHM() + 
+  labs(x = "plot", y = "SPEI Jun:Aug 2021") + 
+  theme(axis.text.x = element_blank())
+
+nrow(daymet_final)
+nrow(prism_comb)
+clim_comb <- inner_join(daymet_final, prism_comb, by = c("Plot_Name", "year"))
+
+
+names(clim_comb)
+names(daymet_final)
+
+ggplot(clim_comb, aes(x = dm_ppt_sum_8, y = ppt_08)) +
+  geom_point(alpha = 0.6, color = 'dimgrey') + geom_smooth(se = F) +
+  labs(x = "DayMet August Precip.", y = "Prism August Precip.") +
+  forestNETN::theme_FHM() 
+
+ggplot(clim_comb |> filter(year >= 1980), 
+       aes(x = year, y = ppt_08)) +
+  geom_smooth(aes(x = year, y = ppt_08), se = F, color = 'dimgrey') +
+  geom_smooth(aes(x = year, y = dm_ppt_sum_8),se = F, color = 'steelblue') +
+  geom_jitter(aes(y = dm_ppt_sum_8), color = 'lightblue', 
+              alpha = 0.5, width = 0.1) +
+  geom_point(color = 'dimgrey', alpha = 0.5) + 
+  labs(x = "year", y = "August Precip. Comp.", subtitle = "grey = prism; blue = daymet") + 
+  forestNETN::theme_FHM() 
+
+head(ws_comb)
+ggplot() +  
+  geom_point(data = ws_comb |> filter(month == 8), 
+             aes(x = year, y = ws_prec), color = 'green')
+
+
+ptmax <- 
+  ggplot(clim_comb |> filter(year >= 1980) |> filter(Plot_Name == "ACAD-039"), 
+                aes(x = tmax_08, y = dm_tmax_mean_8, group = year, color = year)) +
+         geom_point(aes(color = year)) + theme(legend.position = 'none') +
+         scale_color_viridis_c() + forestNETN::theme_FHM() + 
+         xlim(20.5, 27) + ylim(20.5, 27) + geom_abline(slope = 1) +
+         labs(x = "prism tmax", y = "daymet mean tmax", subtitle = "August: ACAD-039")
+
+ptmin <- 
+  ggplot(clim_comb |> filter(year >= 1980)|> filter(Plot_Name == "ACAD-039"), 
+         aes(x = tmin_08, y = dm_tmin_mean_8, group = year, color = year)) +
+  geom_point(aes(color = year)) +
+  scale_color_viridis_c() + forestNETN::theme_FHM() + 
+  xlim(11, 18) + ylim(11, 18) + geom_abline(slope = 1, intercept = 0) +
+  labs(x = "prism tmin", y = "daymet mean tmin", subtitle = "August: ACAD-039") 
+  
+
+cowplot::plot_grid(ptmax, ptmin, rel_widths = c(0.45, 0.55))
+
+tmax_aug <- 
+  ggplot(clim_comb |> filter(year >= 1980) |> filter(Plot_Name == "ACAD-039"), 
+       aes(x = year, y = tmax_08)) +
+  geom_jitter(aes(y = dm_tmax_8), color = 'lightblue', 
+              alpha = 0.5, width = 0.1) +
+  geom_point(color = 'dimgrey', alpha = 0.5) + 
+  geom_smooth(aes(x = year, y = tmax_08), se = F, color = 'dimgrey') +
+  geom_smooth(aes(x = year, y = dm_tmax_8),se = F, color = 'steelblue') +
+  ylim(0, 40)+
+  labs(x = "year", y = "August Tmax. Comp.", subtitle = "grey = prism; blue = daymet") + 
+  forestNETN::theme_FHM()
+
+tmin_aug <- 
+  ggplot(clim_comb |> filter(year >= 1980) |> filter(Plot_Name == "ACAD-039"), 
+       aes(x = year, y = tmin_08)) +
+  geom_jitter(aes(y = dm_tmin_8), color = 'lightblue', 
+              alpha = 0.5, width = 0.1) +
+  geom_point(color = 'dimgrey', alpha = 0.5) + 
+  geom_smooth(aes(x = year, y = tmin_08), se = F, color = 'dimgrey') +
+  geom_smooth(aes(x = year, y = dm_tmin_8),se = F, color = 'steelblue') +
+  ylim(0, 40)+
+  labs(x = "year", y = "August Tmin. Comp.", subtitle = "grey = prism; blue = daymet") + 
+  forestNETN::theme_FHM()
+
+cowplot::plot_grid(tmin_aug, tmax_aug)
+
+ggplot(clim_comb |> filter(year >= 1980) |> filter(Plot_Name == "ACAD-039"), 
+       aes(x = year, y = ppt_08)) +
+  geom_smooth(aes(x = year, y = ppt_08), se = F, color = 'dimgrey') +
+  geom_smooth(aes(x = year, y = dm_ppt_sum_8),se = F, color = 'steelblue') +
+  geom_jitter(aes(y = dm_ppt_sum_8), color = 'lightblue', 
+              alpha = 0.5, width = 0.1) +
+  geom_point(color = 'dimgrey', alpha = 0.5) + 
+  labs(x = "year", y = "Aug Precip. Comp.", subtitle = "grey = prism; blue = daymet") + 
+  forestNETN::theme_FHM()
 
 
 #---- Read in deposition data ----
