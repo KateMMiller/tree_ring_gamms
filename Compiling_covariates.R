@@ -12,6 +12,9 @@ library(starsExtra) # for nearest neighbor fixes
 library(lubridate)
 library(prism)
 library(daymetr)
+library(SPEI)
+#devtools::install_github("WillemMaetens/standaRdized")
+library(standaRdized) # for batch calculating SPEI
 
 importData()
 
@@ -51,7 +54,7 @@ trees <- joinTreeData(park = "ACAD", from = 2018, to = 2021, status = "live") %>
                                            liveBA_m2ha = sum(BA_cm2, na.rm = T)/225)
 
 #------ Pull in elevation data, which came from https://coast.noaa.gov/dataviewer/ ------
-forest_plots <- st_read("C:/NETN/Monitoring_Projects/Forest_Health/Forest_plots_2010/ACAD_forest_plots_2018_elev.shp")
+forest_plots <- st_read("./data/ACAD_forest_plots_2018_elev.shp")
 forest_plots_df <- data.frame(forest_plots) %>% mutate(Plot_Name = paste0("ACAD-", Plot)) %>% 
                    select(Plot_Name, Group_1, elev_m = RASTERVALU, fire47 = X1947_fire)
 
@@ -76,7 +79,7 @@ table(complete.cases(full_plot_data)) #176 TRUE
 #---- Compile data with 1 row per year in each core ----
 #------ Core meta data ------
 acad_core_meta1 <- read_excel(
-  "C:/NETN/collaborators/Schaberg/Core_Data/ACAD_tree_core_data_2013-2021.xlsx") %>% 
+  "./data/ACAD_tree_core_data_2013-2021.xlsx") %>% 
   arrange(coreID) %>% select(Plot_Name, coreID, Species, Crown_Class, DBH, est_age = `estimated #_Rings_USFS`)
 
 head(acad_core_meta1)
@@ -95,7 +98,7 @@ acad_core_meta <- left_join(acad_core_meta1,
                          by = "Plot_Name")
 
 #------ Read in and compile ring width data ------
-path = "C:/NETN/collaborators/Schaberg/Acadia increment core data 20240228.xlsx"
+path = "./data/Acadia increment core data 20240228.xlsx"
 BAI <- excel_sheets(path)[grep("BAI", excel_sheets(path))]
 RRW <- excel_sheets(path)[grep("RRW", excel_sheets(path))]
 
@@ -188,10 +191,6 @@ acad_sf <- st_as_sf(acadplots, coords = c("long", "lat"), crs = 4326)
 
 bndbox <- st_as_sfc(st_bbox(acad_sf)) #xmin: -74.56284 ymin: 40.74542 xmax: -68.0704 ymax: 44.40644
 
-# ggplot(acad_sf) + 
-#   geom_sf(color = 'red', alpha = 0.2) + 
-#   theme_bw() #+ geom_sf(data  = bndbox, fill = NA)
-
 #------ PRISM ------
 # Annoyingly, PRISM makes you set the WD to download to the folder you want
 # Commented out because only have to run it once to download
@@ -257,8 +256,7 @@ purrr::map_dfr(1974:2022, function(yr){
 })
 
 # test <- comb_prism_year(type = 'ppt', year = 1975, month = 1:12)
-# View(test)
-length(1974:2022) * 176 
+#length(1974:2022) * 176 
 
 head(ppt)
 
@@ -284,10 +282,11 @@ prism_comb <- reduce(clims, left_join, by = c("Plot_Name", "year"))
 write.csv(prism_comb, "./data/prism_data_comb.csv", row.names = F)
 
 # DayMet data
+# create csv for batch download
 acad_daymet_df <- acadplots |> select(site = Plot_Name, latitude = lat, longitude = long)
 write.csv(acad_daymet_df, "./data/acadplots_for_daymet.csv", row.names = F)
 
-# batch download data for each plot
+# batch download data for each plot- commented out because only run once
 # download_daymet_batch(file_location = "./data/acadplots_for_daymet.csv",
 #                       start = 1980, 
 #                       end = 2022, 
@@ -297,11 +296,11 @@ write.csv(acad_daymet_df, "./data/acadplots_for_daymet.csv", row.names = F)
 
 # read in and combine the data into 1 large data frame
 # need to iterate reading in the files, drop the deader text on the top, and make data wide by month
-comb_daymet <- function(plot){
+comb_daymet_by_mon <- function(plot){
 
   df <- read.table(paste0("./data/daymet/", plot, "_1980_2022.csv"), 
                    sep = ",", skip = 7, header = T) |> 
-    mutate(Plot_Name = "ACAD-001") |> select(Plot_Name, everything())
+    mutate(Plot_Name = plot) |> select(Plot_Name, everything())
 
   colnames(df) <- c("Plot_Name", "year", "yday", "dayls", 'ppt', 'srad', 'swe', 'tmax', 'tmin', 'vp')
   df_sum <- df |> mutate(date = as.Date(yday-1, origin = "1980-01-01"),
@@ -309,6 +308,7 @@ comb_daymet <- function(plot){
     group_by(Plot_Name, year, month) |> 
     summarise(dm_ppt_sum = sum(ppt, na.rm = T),
               dm_no_ppt_days = sum(ppt < 0.1),
+              dm_srad_mjm2 = mean((srad*dayls)/1000000),
               dm_tmax = max(tmax, na.rm = T),
               dm_tmin = min(tmin, na.rm = T),
               dm_vpmax = max(vp, na.rm = T),
@@ -316,41 +316,94 @@ comb_daymet <- function(plot){
               .groups = 'drop')
 
  df_wide <- df_sum |> pivot_wider(names_from = month, 
-                                  values_from = c(dm_ppt_sum, dm_no_ppt_days, 
+                                  values_from = c(dm_ppt_sum, dm_no_ppt_days, dm_srad_mjm2,
                                                   dm_tmax, dm_tmin, dm_vpmax, dm_vpavg))
 return(df_wide)
 }
 
+# test <- comb_daymet(plot = "ACAD-002")
+# View(test)
 plots <- sort(unique(acadplots$Plot_Name)) 
-daymet_comb <- map_dfr(plots, ~comb_daymet(.))
-write.csv(daymet_comb, "./data/daymet_climate_data_1980_2022.csv")
-
-# prism <- read.csv("C:/NETN/collaborators/Schaberg/PRISM_simp.csv") %>%
-#   mutate(Year = as.numeric(substr(Date, 1, 4)),
-#          month = as.numeric(substr(Date, 6, 7))) %>%
-#   select(Year, month, ppt_mm = ppt..mm., tminC = tmin..degrees.C.,
-#          tmeanC = tmean..degrees.C., tmaxC = tmax..degrees.C.) %>%
-#   pivot_wider(names_from = month, values_from = c(ppt_mm, tminC, tmeanC, tmaxC))
+daymet_comb <- map_dfr(plots, ~comb_daymet_by_mon(.))
+nrow(daymet_comb) == length(1980:2022) * 176 # 7586; TRUE
+daymet_final <- inner_join(acadplots, data.frame(daymet_comb), by = "Plot_Name")
+write.csv(daymet_final, "./data/daymet_climate_data_1980_2022.csv")
 
 #------ SPEI ------
+#-- SPEI by hand using dayment data --
+comb_daymet_long <- function(plot){
+  
+  dat <- read.table(paste0("./data/daymet/", plot, "_1980_2022.csv"), 
+                   sep = ",", skip = 7, header = T) |> 
+    mutate(Plot_Name = plot,
+           origin = as.Date(paste0(year, "-01-01"),tz = "UTC") -1 ,
+           date = as.Date(yday, origin = origin, tz = "UTC"), 
+           month = month(date)) |> 
+    select(Plot_Name, everything())
+  
+  names(dat)
+  colnames(dat) <- c("Plot_Name", "year", "yday", "dayls", 'ppt', 'srad', 'swe', 'tmax', 'tmin', 'vp',
+                     'origin', 'date', 'month')
+  dat$srad_mjm2 <- (dat$srad * dat$dayls/1000000)
+  dat2 <- inner_join(acadplots, dat, by = "Plot_Name")
+  return(dat2)
+  }
+
+dm_comb <- map_dfr(plots, ~comb_daymet_long(.))
+
+dm_month <- dm_comb |> group_by(Plot_Name, year, month) |> 
+  summarize(lat = first(lat),
+            tmax = max(tmax),
+            tmin = min(tmin),
+            srad = mean(srad_mjm2),
+            ppt = sum(ppt), 
+            .groups = 'drop')
+
+head(dm_month)
+# data <- data.frame(tmax = tmax_mon[,1], tmin = tmin_mon[,1], ppt = ppt_mon[,1], srad = srad_mon[,1])
+dm_month$PEThar <- hargreaves(Tmin = dm_month$tmin,
+                              Tmax = dm_month$tmax,
+                              lat = dm_month$lat,
+                              Ra = dm_month$srad,
+                              Pre = dm_month$ppt)
+
+dm_month$BAL <- dm_month$ppt - dm_month$PEThar
+
+# dm_ts <- ts(dm_month[, c("lat", "ppt", "tmax", "tmin", "srad_mjm2", "PEThar", "BAL")],
+#             start = c(1980, 01, 01), end = c(2022, 12, 31), frequency = 365)
+# summary(dm_ts)
+
+SPEI_dat <- data.frame(dm_month, 
+                       SPEI01 = spei(dm_month$BAL, scale = 1)$fitted,
+                       SPEI03 = spei(dm_month$BAL, scale = 3)$fitted,
+                       SPEI06 = spei(dm_month$BAL, scale = 6)$fitted,
+                       SPEI12 = spei(dm_month$BAL, scale = 12)$fitted)
+head(SPEI_dat)
+SPEI_wide <- SPEI_dat |> select(Plot_Name, year, month, SPEI01:SPEI12) |> 
+  pivot_wider(names_from = month, values_from = c(SPEI01, SPEI03, SPEI06, SPEI12))
+head(SPEI_wide)
+
+#-- Online SPEI --
 # download nc datasets from web:
 #   https://spei.csic.es/spei_database/#map_name=spei01#map_position=1463
 # URL for SPEI01
 
-# Function to crop and extract values for ACAD plots
+# Function to crop and extract values for ACAD plots from the spei database
+#spei = "spei01"
 extract_spei <- function(spei){
   ras <- read_stars(paste0("./data/spei_nc/", spei, ".nc"))
-  spei_crop <- st_crop(ras, bbox)
+  spei_crop <- st_crop(ras, bndbox)
   names(spei_crop) <- "spei"
-  spei_ex <- st_extract(spei_crop, plots_sf)
+  spei_ex <- st_extract(spei_crop, acad_sf)
   spei_df <- as.data.frame(spei_ex, xy = T)
   spei_df$long <- st_coordinates(spei_df$geometry)[,1]
   spei_df$lat <- st_coordinates(spei_df$geometry)[,2]
   spei_yr <- spei_df |> filter(time >= "1974-01-01") # make dataset smaller
-  spei_plots <- left_join(spei_yr, plots, by = c("long", "lat")) |> 
+  
+  spei_plots <- left_join(spei_yr, acadplots, by = c("long", "lat")) |> 
     mutate(year = year(time), month = month(time),
            value = as.numeric(spei)) |> 
-    select(Plot_Name = loc, long, lat, value, year, month)  
+    select(Plot_Name, long, lat, value, year, month)  
   
   spei_wide <- spei_plots |> 
     pivot_wider(names_from = month, values_from = value,
@@ -367,13 +420,10 @@ spei36 <- extract_spei("spei36")
 spei_list <- list(spei01, spei02, spei03, spei06, spei12, spei36)
 spei_all <- purrr::reduce(spei_list, full_join, 
                           by = c("Plot_Name", "long", "lat", "year"))
-
+head(SPEI_wide)
 write.csv(spei_all, "./data/ACAD_SPEI_1974-2022.csv", row.names = F)
 
-climate_comb <- full_join(prism, spei, by = "Year")
-table(climate_comb$Year)
 
-write.csv(climate_comb, "./data/PRISM_SPEI_wide.csv", row.names = F)
 
 #---- Read in deposition data ----
 dep <- read.csv("C:/NETN/collaborators/Schaberg/NTN-me98-annual-mgl.csv") %>% select(Year = yr, NO3, SO4, pH)
