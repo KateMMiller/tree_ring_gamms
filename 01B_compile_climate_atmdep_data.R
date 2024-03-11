@@ -370,4 +370,4 @@ clim_comb4 <- full_join(clim_comb3, dep, by = "year")
 #write.csv(clim_comb4, "./data/temp/ACAD_climate_data.csv", row.names = F)
 
 core_clim <- full_join(plot_data_comb, clim_comb4, by = c("Plot_Name", "Year" = "year"))
-#write.csv(core_clim, "./data/temp/ACAD_plot_core_climate_data.csv", row.names = F)
+write.csv(core_clim, "./data/ACAD_plot_core_climate_full_data.csv", row.names = F)
