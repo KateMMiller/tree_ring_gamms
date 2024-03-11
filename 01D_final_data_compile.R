@@ -89,8 +89,8 @@ lag_fun <- function(dat, x, lag){
 }
 
 vars <- c("SPEI01_4", "SPEI01_5", "SPEI01_6", "SPEI01_7", "SPEI01_8", "SPEI01_9",
-          "SPEI03_6", "SPEI03_9", 
-          "NO3", "SO4", "pH", "tmin_wint", "tmax_gs")
+          "SPEI03_4", "SPEI03_5", "SPEI03_6", "SPEI03_7", "SPEI03_8", "SPEI03_9",
+          "NO3", "SO4", "pH", "tmin_wint", "tmax_gs", "ppt_gs", "ppt_8")
 
 rolls <- c(2:5)
 roll_df <- data.frame(vars = rep(vars, each = length(rolls)),
