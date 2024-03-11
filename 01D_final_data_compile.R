@@ -17,8 +17,9 @@ fulld <- fulld |> mutate(forest_type =
                                      Group_1 == "North-Central Appalachian & Laurentian Rocky Outc*" ~ "OUTC",
                                      Group_1 == "Red Spruce - Fir Forest" ~ "SSF",
                                      Group_1 == "SSF- Aspen & Birch Phase" ~ "SSFA")) 
+names(fulld)
 
-simpd <- fulld |> select(Plot_Name, Year, Unit = ParkSubUnit, coreID,
+simpd <- fulld |> select(Plot_Name, Year, Unit = ParkSubUnit, coreID, species,
                          RRWmm, BAIcm2,
                          X = xCoordinate, Y = yCoordinate,
                          Physio = PhysiographySummary, Aspect, forest_type, elev_m, 
