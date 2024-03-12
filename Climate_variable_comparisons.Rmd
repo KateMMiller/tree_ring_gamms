@@ -1,0 +1,222 @@
+---
+output: 
+  html_document:
+    css: styles.css
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
+```
+
+#### Comparing PRISM and DayMet with weather station data. 
+
+<ul>
+<li>Weather station data were downloaded from the Applied Climate Information System API (www.rcc-acis.org) for the McFarland Hill WS in Acadia NP. </li>
+<li>Prism data are 4km2 rasters that were downloaded using the prism R package then values for each plot were extracted. </li>
+<li>DayMet data were batch downloaded for each point using the daymetr package</li>
+<li>Standardized Precipitation-Evapotranspiration Index (SPEI) was calculated using DayMet data and Hargraeves PET using the SPEI R package.</li>
+<li>Global 1 degree SPEI data were downloaded from the SPEI database (spei.csic.es) and extracted for each point in R.</li>
+<li>Code: https://github.com/KateMMiller/tree_ring_gamms/blob/main/01B_compile_climate_atmdep_data.R</li>
+</ul>
+
+```{r import, include = FALSE}
+library(tidyverse)
+clim_dat <- read.csv("./data/temp/ACAD_climate_data.csv")
+
+```
+
+```{r results = 'hide'}
+#---- Compare weather station, prism and daymet data for near and far plots ----
+ws_comp_39 <- clim_dat |> #filter(between(year, 1985, 2014)) |> 
+  filter(Plot_Name == "ACAD-039") # closest to WS
+ws_comp_64 <- clim_dat |> #filter(between(year, 1985, 2014)) |> 
+  filter(Plot_Name == "ACAD-064") # IAH- farthest
+ws_comp_36 <- clim_dat |> #filter(between(year, 1985, 2014)) |> 
+  filter(Plot_Name == "ACAD-036") # SCH- farthest
+
+# Function for comparing weather station, daymet and prism data for 1 plot of data
+ws_dm_pr_plot <- function(dat, ws, dm, pr, ylab, title, legend = "none"){
+  ggplot(dat, aes(x = year)) + forestNETN::theme_FHM() + 
+  geom_smooth(aes(x = year, y = {{ws}}, color = 'Weather Station'), se = F) +
+  geom_point(aes(y = {{ws}}, fill = "Weather station", shape = "Weather station", size = "Weather station")) +
+  geom_smooth(aes(x = year, y = {{dm}}, color = 'DayMet'), se = F) +
+  geom_point(aes(y = {{dm}}, fill = "DayMet", shape = "DayMet", size = "DayMet")) +
+  geom_smooth(aes(x = year, y = {{pr}}, color = "Prism"), se = F) +
+  geom_point(aes(y = {{pr}}, fill = "Prism", shape = "Prism", size = "Prism")) +
+  
+  labs(y = ylab, subtitle = title) +
+  scale_fill_manual(values = c("#949494", "orange", "dodgerblue"), 
+                    name = "Data Type",
+                    labels = c("Weather Station", "DayMet", "Prism")) +
+  scale_color_manual(values = c("#949494", "orange", "dodgerblue"), 
+                    name = "Data Type",
+                    labels = c("Weather Station", "DayMet", "Prism")) +
+  scale_shape_manual(values = c(24, 23, 21), 
+                     name = "Data Type",
+                     labels = c("Weather Station", "DayMet", "Prism")) +
+  scale_size_manual(values = c(3, 3.5, 3.5), 
+                    name = "Data Type",
+                    labels = c("Weather Station", "DayMet", "Prism")) +
+  theme(legend.position = legend, legend.title = element_blank())
+}
+
+```
+
+<details open><summary><h4>Plot-Level Comparisons</h4></summary>
+<details open><summary><h5>Average Maximum Temperature in July (C)</h5></summary>
+```{r message = FALSE, warning = FALSE, height = 6}
+tmax_july_p39 <- 
+ws_dm_pr_plot(ws_comp_39, ws = ws_tmaxc_7, dm = dm_tmax_mean_7, pr = pr_tmax_07,
+              ylab = "Max Temp. (C)", title = "ACAD-039: closest to WS")
+
+tmax_july_p36 <- 
+ws_dm_pr_plot(ws_comp_36, ws = ws_tmaxc_7, dm = dm_tmax_mean_7, pr = pr_tmax_07,
+              ylab = "Max Temp. (C)", title = "ACAD-036: SCH far from WS")
+
+tmax_july_p64 <- 
+ws_dm_pr_plot(ws_comp_64, ws = ws_tmaxc_7, dm = dm_tmax_mean_7, pr = pr_tmax_07,
+              ylab = "Max Temp. (C)", title = "ACAD-064: IAH far from WS", 
+              legend = 'bottom')
+
+cowplot::plot_grid(tmax_july_p39, tmax_july_p36, tmax_july_p64, ncol = 1, 
+                   rel_heights = c(0.3, 0.3, 0.4))
+
+```
+</details>
+<details open><summary><h5>Average Minimum Temperature in January (C)</h5></summary>
+```{r message = FALSE, warning = FALSE, height = 6}
+tmin_jan_p39 <- 
+ws_dm_pr_plot(ws_comp_39, ws = ws_tminc_1, dm = dm_tmin_mean_1, pr = pr_tmin_01,
+              ylab = "Min. Temp. (C)", title = "ACAD-039: closest to WS")
+
+tmin_jan_p36 <- 
+ws_dm_pr_plot(ws_comp_36, ws = ws_tminc_1, dm = dm_tmin_mean_1, pr = pr_tmin_01,
+              ylab = "Min. Temp. (C)", title = "ACAD-036: SCH far from WS")
+
+tmin_jan_p64 <- 
+ws_dm_pr_plot(ws_comp_64, ws = ws_tminc_1, dm = dm_tmin_mean_1, pr = pr_tmin_01,
+              ylab = "Min. Temp. (C)", title = "ACAD-064: IAH far from WS", 
+              legend = 'bottom')
+
+cowplot::plot_grid(tmin_jan_p39, tmin_jan_p36, tmin_jan_p64, ncol = 1, 
+                   rel_heights = c(0.3, 0.3, 0.4))
+
+```
+</details>
+<details open><summary><h5>Total July Precip. (mm)</h5></summary>
+```{r message = FALSE, warning = FALSE, height = 6}
+ppt_july_p39 <- 
+ws_dm_pr_plot(ws_comp_39, ws = ws_pcpmm_7, dm = dm_ppt_sum_7, pr = pr_ppt_07,
+              ylab = "July Precip. (mm)", title = "ACAD-039: closest to WS")
+
+ppt_july_p36 <- 
+ws_dm_pr_plot(ws_comp_36, ws = ws_pcpmm_7, dm = dm_ppt_sum_7, pr = pr_ppt_07,
+              ylab = "July Precip. (mm)", title = "ACAD-036: SCH far from WS")
+
+ppt_july_p64 <- 
+ws_dm_pr_plot(ws_comp_64, ws = ws_pcpmm_7, dm = dm_ppt_sum_7, pr = pr_ppt_07,
+              ylab = "July Precip. (mm)", title = "ACAD-064: IAH far from WS", legend = 'bottom')
+
+cowplot::plot_grid(ppt_july_p39, ppt_july_p36, ppt_july_p64, ncol = 1,
+                   rel_heights = c(0.3, 0.3, 0.4))
+```
+</details></details>
+
+<details open><summary><h4>Overall Comparisons</h4></summary>
+<details open><summary><h5>Average Maximum Temperature in July (C)</h5></summary>
+```{r, message = F, warning = F}
+ggplot(clim_dat, aes(x = ws_tmaxc_7)) + forestNETN::theme_FHM() +
+  geom_point(aes(y = dm_tmax_mean_7, fill = "DayMet", shape = "DayMet"), size = 2) +
+  geom_point(aes(y = pr_tmax_07, fill = "Prism", shape = "Prism"), size = 2) +
+  scale_fill_manual(values = c("orange", "dodgerblue"),
+                    name = "Data Type",
+                    labels = c("DayMet", "Prism")) +
+  scale_shape_manual(values = c(23, 21),
+                     name = "Data Type",
+                     labels = c("DayMet", "Prism")) +
+  labs(x = "Weather Station Data", y = "Raster Data", subtitle = "Max. July Temp.") +
+  geom_abline(slope = 1) + theme(aspect.ratio = 1, legend.title = element_blank()) 
+
+
+```
+</details>
+
+<details open><summary><h5>Average Minimum Temperature in January (C)</h5></summary>
+```{r}
+ggplot(clim_dat, aes(x = ws_tminc_1)) + forestNETN::theme_FHM() +
+  geom_point(aes(y = dm_tmin_mean_1, fill = "DayMet", shape = "DayMet"), size = 2) +
+  geom_point(aes(y = pr_tmin_01, fill = "Prism", shape = "Prism"), size = 2.5) +
+  scale_fill_manual(values = c("orange", "dodgerblue"),
+                    name = "Data Type",
+                    labels = c("DayMet", "Prism")) +
+  scale_shape_manual(values = c(23, 21),
+                     name = "Data Type",
+                     labels = c("DayMet", "Prism")) +
+  labs(x = "Weather Station Data", y = "Raster Data", subtitle = "Min. January Temp.") +
+  geom_abline(slope = 1) + theme(aspect.ratio = 1, legend.title = element_blank()) 
+
+
+```
+</details>
+
+<details open><summary><h5>Total July Precip. (mm)</h5></summary>
+```{r}
+ggplot(clim_dat, aes(x = ws_pcpmm_7)) + forestNETN::theme_FHM() +
+  geom_point(aes(y = dm_ppt_sum_7, fill = "DayMet", shape = "DayMet"), size = 2) +
+  geom_point(aes(y = pr_ppt_07, fill = "Prism", shape = "Prism"), size = 2.5) +
+  scale_fill_manual(values = c("orange", "dodgerblue"),
+                    name = "Data Type",
+                    labels = c("DayMet", "Prism")) +
+  scale_shape_manual(values = c(23, 21),
+                     name = "Data Type",
+                     labels = c("DayMet", "Prism")) +
+  labs(x = "Weather Station Data", y = "Raster Data", subtitle = "July Precip. (mm)") +
+  geom_abline(slope = 1) + theme(aspect.ratio = 1, legend.title = element_blank()) 
+
+
+```
+</details></details>
+
+<details open><summary><h4> Standardized Precipitation-Evapotranspiration Index (SPEI)</h4></summary>
+<details open><summary><h5>August 1-month SPEI</h5></summary>
+```{r}
+ggplot(clim_dat, aes(x = year)) + forestNETN::theme_FHM() +
+  geom_point(aes(y = dm_SPEI01_8, color = "DayMet", shape = "DayMet"), size = 2) +
+  geom_smooth(aes(x = year, y = dm_SPEI01_8), color = 'dodgerblue3', se = F) +
+  geom_point(aes(y = nc_SPEI01_8, color = "Global", shape = "Global"), size = 2) +
+  geom_smooth(aes(x = year, y = nc_SPEI01_8), color = "#D07712", se = F) +
+  # scale_fill_manual(values = c("#F7D196", "#A3CDFC"),
+  #                   name = "Data Type",
+  #                   labels = c("DayMet", "Global")) +
+  scale_color_manual(values = c("orange", "dodgerblue"),
+                    name = "Data Type",
+                    labels = c("DayMet", "Global")) +
+  scale_shape_manual(values = c(18, 19),
+                     name = "Data Type",
+                     labels = c("DayMet", "Global")) +
+  labs(x = "Year", y = "August SPEI-1 month") +
+  geom_abline(slope = 1) + theme(aspect.ratio = 1, legend.title = element_blank()) 
+```
+</details>
+
+<details open><summary><h5>August 3-month SPEI</h5></summary>
+```{r}
+ggplot(clim_dat, aes(x = year)) + forestNETN::theme_FHM() +
+  geom_point(aes(y = dm_SPEI03_8, color = "DayMet", shape = "DayMet"), size = 2) +
+  geom_smooth(aes(x = year, y = dm_SPEI03_8), color = 'dodgerblue3', se = F) +
+  geom_point(aes(y = nc_SPEI03_8, color = "Global", shape = "Global"), size = 2) +
+  geom_smooth(aes(x = year, y = nc_SPEI03_8), color = "#D07712", se = F) +
+  # scale_fill_manual(values = c("#F7D196", "#A3CDFC"),
+  #                   name = "Data Type",
+  #                   labels = c("DayMet", "Global")) +
+  scale_color_manual(values = c("orange", "dodgerblue"),
+                    name = "Data Type",
+                    labels = c("DayMet", "Global")) +
+  scale_shape_manual(values = c(18, 19),
+                     name = "Data Type",
+                     labels = c("DayMet", "Global")) +
+  labs(x = "Year", y = "August SPEI-3 month") +
+  geom_abline(slope = 1) + theme(aspect.ratio = 1, legend.title = element_blank()) 
+
+```
+</details></details>

@@ -292,7 +292,7 @@ write.csv(spei_all_comb, "./data/SPEI_DayMet_CSIC_1980-2022.csv", row.names = F)
 # ACAD_station_IDs: 170100 (Coop); USC00170100 (GHCN); BHRM1 (NWS LI)
 # Adapted from https://github.com/mhlinder/weather-data-now/blob/master/fetch_temp.R
 
-get_wdat <- function(field, reduce = c("sum", "mean")){
+get_wdat <- function(field, stn, reduce = c("sum", "mean")){
   urlbase <- "http://data.rcc-acis.org/StnData?params=%s"
   elem_template <- function(field) {
     list(name = field,
@@ -301,7 +301,7 @@ get_wdat <- function(field, reduce = c("sum", "mean")){
          reduce = reduce)}
 
   params <-
-    list(sid   = "BHRM1",  ## NWS name for ACAD 
+    list(sid   = stn,  
          sdate = "por", #"1980-01-01",
          edate = "por", #"2022-12-21",
          elems = lapply(field, elem_template))
@@ -320,11 +320,10 @@ get_wdat <- function(field, reduce = c("sum", "mean")){
   return(wdat)
 }
 
-pcp_in <- get_wdat('pcpn', reduce = 'sum')
-tmax_f <- get_wdat('maxt', reduce = 'mean')
-tmin_f <- get_wdat('mint', reduce = 'mean')
+pcp_in <- get_wdat('pcpn', stn = "BHRM1", reduce = 'sum')
+tmax_f <- get_wdat('maxt', stn = "USC00170100", reduce = 'mean')
+tmin_f <- get_wdat('mint', stn = "USC00170100", reduce = 'mean')
 
-head(pcp_in)
 
 ws_ls <- list(pcp_in, tmax_f, tmin_f)
 ws_comb <- reduce(ws_ls, full_join, by = "Date")
@@ -341,6 +340,7 @@ ws_wide <- ws_comb |> mutate(month = as.numeric(substr(Date, 6, 7)),
                              year = as.numeric(substr(Date, 1, 4))) |> 
   select(year, month, ws_pcpmm, ws_tmaxc, ws_tminc) |> 
   pivot_wider(names_from = month, values_from = c(ws_pcpmm, ws_tmaxc, ws_tminc))
+table(ws_wide$year)
 
 write.csv(ws_wide, "./data/NOAA_weather_station_data_1980-2014.csv", row.names = F)
 
@@ -367,7 +367,7 @@ clim_comb1 <- full_join(daymet_final, prism_comb, by = c("Plot_Name", "year"))
 clim_comb2 <- full_join(clim_comb1, spei_all_comb, by = c("Plot_Name", "year", "lat", "long"))
 clim_comb3 <- full_join(clim_comb2, ws_wide, by = "year")
 clim_comb4 <- full_join(clim_comb3, dep, by = "year")
-#write.csv(clim_comb4, "./data/temp/ACAD_climate_data.csv", row.names = F)
+write.csv(clim_comb4, "./data/ACAD_climate_data.csv", row.names = F)
 
 core_clim <- full_join(plot_data_comb, clim_comb4, by = c("Plot_Name", "Year" = "year"))
 write.csv(core_clim, "./data/ACAD_plot_core_climate_full_data.csv", row.names = F)
