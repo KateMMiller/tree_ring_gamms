@@ -62,8 +62,8 @@ ws_dm_pr_plot <- function(dat, ws, dm, pr, ylab, title, legend = "none"){
 
 ```
 
-<details open><summary><h4>Plot-Level Comparisons</h4></summary>
-<details open><summary><h5>Average Maximum Temperature in July (C)</h5></summary>
+<details open><summary class='drop'><h4>Plot-Level Comparisons</h4></summary>
+<details open><summary class='drop'><h5>Average Maximum Temperature in July (C)</h5></summary>
 ```{r message = FALSE, warning = FALSE, height = 6}
 tmax_july_p39 <- 
 ws_dm_pr_plot(ws_comp_39, ws = ws_tmaxc_7, dm = dm_tmax_mean_7, pr = pr_tmax_07,
@@ -83,7 +83,7 @@ cowplot::plot_grid(tmax_july_p39, tmax_july_p36, tmax_july_p64, ncol = 1,
 
 ```
 </details>
-<details open><summary><h5>Average Minimum Temperature in January (C)</h5></summary>
+<details open><summary class='drop'><h5>Average Minimum Temperature in January (C)</h5></summary>
 ```{r message = FALSE, warning = FALSE, height = 6}
 tmin_jan_p39 <- 
 ws_dm_pr_plot(ws_comp_39, ws = ws_tminc_1, dm = dm_tmin_mean_1, pr = pr_tmin_01,
@@ -103,7 +103,7 @@ cowplot::plot_grid(tmin_jan_p39, tmin_jan_p36, tmin_jan_p64, ncol = 1,
 
 ```
 </details>
-<details open><summary><h5>Total July Precip. (mm)</h5></summary>
+<details open><summary class='drop'><h5>Total July Precip. (mm)</h5></summary>
 ```{r message = FALSE, warning = FALSE, height = 6}
 ppt_july_p39 <- 
 ws_dm_pr_plot(ws_comp_39, ws = ws_pcpmm_7, dm = dm_ppt_sum_7, pr = pr_ppt_07,
@@ -122,8 +122,8 @@ cowplot::plot_grid(ppt_july_p39, ppt_july_p36, ppt_july_p64, ncol = 1,
 ```
 </details></details>
 
-<details open><summary><h4>Overall Comparisons</h4></summary>
-<details open><summary><h5>Average Maximum Temperature in July (C)</h5></summary>
+<details open><summary class='drop'><h4>Overall Comparisons</h4></summary>
+<details open><summary class='drop'><h5>Average Maximum Temperature in July (C)</h5></summary>
 ```{r, message = F, warning = F}
 ggplot(clim_dat, aes(x = ws_tmaxc_7)) + forestNETN::theme_FHM() +
   geom_point(aes(y = dm_tmax_mean_7, fill = "DayMet", shape = "DayMet"), size = 2) +
@@ -141,7 +141,7 @@ ggplot(clim_dat, aes(x = ws_tmaxc_7)) + forestNETN::theme_FHM() +
 ```
 </details>
 
-<details open><summary><h5>Average Minimum Temperature in January (C)</h5></summary>
+<details open><summary class='drop'><h5>Average Minimum Temperature in January (C)</h5></summary>
 ```{r}
 ggplot(clim_dat, aes(x = ws_tminc_1)) + forestNETN::theme_FHM() +
   geom_point(aes(y = dm_tmin_mean_1, fill = "DayMet", shape = "DayMet"), size = 2) +
@@ -159,7 +159,7 @@ ggplot(clim_dat, aes(x = ws_tminc_1)) + forestNETN::theme_FHM() +
 ```
 </details>
 
-<details open><summary><h5>Total July Precip. (mm)</h5></summary>
+<details open><summary class='drop'><h5>Total July Precip. (mm)</h5></summary>
 ```{r}
 ggplot(clim_dat, aes(x = ws_pcpmm_7)) + forestNETN::theme_FHM() +
   geom_point(aes(y = dm_ppt_sum_7, fill = "DayMet", shape = "DayMet"), size = 2) +
@@ -177,8 +177,8 @@ ggplot(clim_dat, aes(x = ws_pcpmm_7)) + forestNETN::theme_FHM() +
 ```
 </details></details>
 
-<details open><summary><h4> Standardized Precipitation-Evapotranspiration Index (SPEI)</h4></summary>
-<details open><summary><h5>August 1-month SPEI</h5></summary>
+<details open><summary class='drop'><h4> Standardized Precipitation-Evapotranspiration Index (SPEI)</h4></summary>
+<details open><summary class='drop'><h5>August 1-month SPEI</h5></summary>
 ```{r}
 ggplot(clim_dat, aes(x = year)) + forestNETN::theme_FHM() +
   geom_point(aes(y = dm_SPEI01_8, color = "DayMet", shape = "DayMet"), size = 2) +
@@ -199,7 +199,7 @@ ggplot(clim_dat, aes(x = year)) + forestNETN::theme_FHM() +
 ```
 </details>
 
-<details open><summary><h5>August 3-month SPEI</h5></summary>
+<details open><summary class='drop'><h5>August 3-month SPEI</h5></summary>
 ```{r}
 ggplot(clim_dat, aes(x = year)) + forestNETN::theme_FHM() +
   geom_point(aes(y = dm_SPEI03_8, color = "DayMet", shape = "DayMet"), size = 2) +
