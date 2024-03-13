@@ -8,7 +8,7 @@ output:
 knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
 ```
 
-#### Comparing PRISM and DayMet with weather station data. 
+<h2> Comparing PRISM and DayMet with weather station data. </h2>
 
 <ul>
 <li>Weather station data were downloaded from the Applied Climate Information System API (www.rcc-acis.org) for the McFarland Hill WS in Acadia NP. </li>
@@ -19,112 +19,294 @@ knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE)
 <li>Code: https://github.com/KateMMiller/tree_ring_gamms/blob/main/01B_compile_climate_atmdep_data.R</li>
 </ul>
 
+Based on these comparisons, I decided to use DayMet data for analyses. 
+<ul><li>Temperature ranges across all plots within a year were consistently lower in PRISM than DayMet, but I don't think climate varies quite as much across the park PRISM assumes.</li>
+<li>Correlations between DayMet and weather station temperature data were much stronger than PRISM.</li>
+</ul>
 ```{r import, include = FALSE}
 library(tidyverse)
-clim_dat <- read.csv("./data/temp/ACAD_climate_data.csv")
+library(GGally)
+clim_dat <- read.csv("./data/temp/ACAD_climate_data.csv") |> filter(year >=1980)
 
 ```
 
 ```{r results = 'hide'}
 #---- Compare weather station, prism and daymet data for near and far plots ----
-ws_comp_39 <- clim_dat |> #filter(between(year, 1985, 2014)) |> 
-  filter(Plot_Name == "ACAD-039") # closest to WS
-ws_comp_64 <- clim_dat |> #filter(between(year, 1985, 2014)) |> 
-  filter(Plot_Name == "ACAD-064") # IAH- farthest
-ws_comp_36 <- clim_dat |> #filter(between(year, 1985, 2014)) |> 
-  filter(Plot_Name == "ACAD-036") # SCH- farthest
-
-# Function for comparing weather station, daymet and prism data for 1 plot of data
-ws_dm_pr_plot <- function(dat, ws, dm, pr, ylab, title, legend = "none"){
-  ggplot(dat, aes(x = year)) + forestNETN::theme_FHM() + 
-  geom_smooth(aes(x = year, y = {{ws}}, color = 'Weather Station'), se = F) +
-  geom_point(aes(y = {{ws}}, fill = "Weather station", shape = "Weather station", size = "Weather station")) +
-  geom_smooth(aes(x = year, y = {{dm}}, color = 'DayMet'), se = F) +
-  geom_point(aes(y = {{dm}}, fill = "DayMet", shape = "DayMet", size = "DayMet")) +
-  geom_smooth(aes(x = year, y = {{pr}}, color = "Prism"), se = F) +
-  geom_point(aes(y = {{pr}}, fill = "Prism", shape = "Prism", size = "Prism")) +
-  
-  labs(y = ylab, subtitle = title) +
-  scale_fill_manual(values = c("#949494", "orange", "dodgerblue"), 
-                    name = "Data Type",
-                    labels = c("Weather Station", "DayMet", "Prism")) +
-  scale_color_manual(values = c("#949494", "orange", "dodgerblue"), 
-                    name = "Data Type",
-                    labels = c("Weather Station", "DayMet", "Prism")) +
-  scale_shape_manual(values = c(24, 23, 21), 
-                     name = "Data Type",
-                     labels = c("Weather Station", "DayMet", "Prism")) +
-  scale_size_manual(values = c(3, 3.5, 3.5), 
-                    name = "Data Type",
-                    labels = c("Weather Station", "DayMet", "Prism")) +
-  theme(legend.position = legend, legend.title = element_blank())
-}
+tmax7_long <- clim_dat |> filter(Plot_Name %in% c("ACAD-039", "ACAD-064", "ACAD-036")) |> 
+  select(Plot_Name, year, ws_tmaxc_7, dm_tmax_mean_7, pr_tmax_07) |> 
+  pivot_longer(ws_tmaxc_7:pr_tmax_07, names_to = "station", values_to = "tmax_7")
 
 ```
 
-<details open><summary class='drop'><h4>Plot-Level Comparisons</h4></summary>
-<details open><summary class='drop'><h5>Average Maximum Temperature in July (C)</h5></summary>
-```{r message = FALSE, warning = FALSE, height = 6}
+<h3>Plot-Level Comparisons</h3>
+<details open><summary class='drop'>Average Maximum Temperature in July (C)</summary>
+```{r message = FALSE, warning = FALSE, fig.height = 6}
 tmax_july_p39 <- 
-ws_dm_pr_plot(ws_comp_39, ws = ws_tmaxc_7, dm = dm_tmax_mean_7, pr = pr_tmax_07,
-              ylab = "Max Temp. (C)", title = "ACAD-039: closest to WS")
+ggplot(tmax7_long |> filter(Plot_Name == "ACAD-039"), 
+       aes(x = year, y = tmax_7, group = station, color = station, shape = station, fill = station)) +
+  geom_point() + geom_smooth(se = F) + forestNETN::theme_FHM() + theme(legend.position = 'none') + 
+  labs(y = "July Max Temp. C", x = NULL, subtitle = "ACAD-039: closest to WS") +
+  scale_fill_manual(values = c("dm_tmax_mean_7" = "orange", 
+                               "pr_tmax_07" = "dodgerblue", 
+                               "ws_tmaxc_7" = "#949494"), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) +
+  scale_color_manual(values = c("dm_tmax_mean_7" = "orange", 
+                                "pr_tmax_07" = "dodgerblue", 
+                                "ws_tmaxc_7" = "#949494"), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) +
+  scale_shape_manual(values = c("dm_tmax_mean_7" = 23, 
+                               "pr_tmax_07" = 21, 
+                               "ws_tmaxc_7" = 24), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) +
+  scale_size_manual(values = c("dm_tmax_mean_7" = 3.5, 
+                               "pr_tmax_07" = 3.5, 
+                               "ws_tmaxc_7" = 3), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) 
 
 tmax_july_p36 <- 
-ws_dm_pr_plot(ws_comp_36, ws = ws_tmaxc_7, dm = dm_tmax_mean_7, pr = pr_tmax_07,
-              ylab = "Max Temp. (C)", title = "ACAD-036: SCH far from WS")
-
+ggplot(tmax7_long |> filter(Plot_Name == "ACAD-036"), 
+       aes(x = year, y = tmax_7, group = station, color = station, shape = station, fill = station)) +
+  geom_point() + geom_smooth(se = F) + forestNETN::theme_FHM() + theme(legend.position = 'none') + 
+  labs(y = "July Max Temp. C",  x = NULL, subtitle = "ACAD-036: SCH farthest east of WS") +
+  scale_fill_manual(values = c("dm_tmax_mean_7" = "orange", 
+                               "pr_tmax_07" = "dodgerblue", 
+                               "ws_tmaxc_7" = "#949494"), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) +
+  scale_color_manual(values = c("dm_tmax_mean_7" = "orange", 
+                                "pr_tmax_07" = "dodgerblue", 
+                                "ws_tmaxc_7" = "#949494"), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) +
+  scale_shape_manual(values = c("dm_tmax_mean_7" = 23, 
+                               "pr_tmax_07" = 21, 
+                               "ws_tmaxc_7" = 24), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) +
+  scale_size_manual(values = c("dm_tmax_mean_7" = 3.5, 
+                               "pr_tmax_07" = 3.5, 
+                               "ws_tmaxc_7" = 3), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) 
+  
 tmax_july_p64 <- 
-ws_dm_pr_plot(ws_comp_64, ws = ws_tmaxc_7, dm = dm_tmax_mean_7, pr = pr_tmax_07,
-              ylab = "Max Temp. (C)", title = "ACAD-064: IAH far from WS", 
-              legend = 'bottom')
+ggplot(tmax7_long |> filter(Plot_Name == "ACAD-064"), 
+       aes(x = year, y = tmax_7, group = station, color = station, shape = station, fill = station)) +
+  geom_point() + geom_smooth(se = F) + forestNETN::theme_FHM() + theme(legend.position = 'bottom') +
+  labs(y = "July Max Temp. C",  x = NULL, subtitle = "ACAD-064: IAH farthest west of WS") +
+  scale_fill_manual(values = c("dm_tmax_mean_7" = "orange", 
+                               "pr_tmax_07" = "dodgerblue", 
+                               "ws_tmaxc_7" = "#949494"), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) +
+  scale_color_manual(values = c("dm_tmax_mean_7" = "orange", 
+                                "pr_tmax_07" = "dodgerblue", 
+                                "ws_tmaxc_7" = "#949494"), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) +
+  scale_shape_manual(values = c("dm_tmax_mean_7" = 23, 
+                               "pr_tmax_07" = 21, 
+                               "ws_tmaxc_7" = 24), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) +
+  scale_size_manual(values = c("dm_tmax_mean_7" = 3.5, 
+                               "pr_tmax_07" = 3.5, 
+                               "ws_tmaxc_7" = 3), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) 
 
 cowplot::plot_grid(tmax_july_p39, tmax_july_p36, tmax_july_p64, ncol = 1, 
                    rel_heights = c(0.3, 0.3, 0.4))
 
 ```
 </details>
-<details open><summary class='drop'><h5>Average Minimum Temperature in January (C)</h5></summary>
-```{r message = FALSE, warning = FALSE, height = 6}
+<details open><summary class='drop'>Average Minimum Temperature in January (C)</summary>
+```{r message = FALSE, warning = FALSE, fig.height = 6}
+tmin1_long <- clim_dat |> filter(Plot_Name %in% c("ACAD-039", "ACAD-064", "ACAD-036")) |> 
+  select(Plot_Name, year, ws_tminc_1, dm_tmin_mean_1, pr_tmin_01) |> 
+  pivot_longer(ws_tminc_1:pr_tmin_01, names_to = "station", values_to = "tmin_1")
+
 tmin_jan_p39 <- 
-ws_dm_pr_plot(ws_comp_39, ws = ws_tminc_1, dm = dm_tmin_mean_1, pr = pr_tmin_01,
-              ylab = "Min. Temp. (C)", title = "ACAD-039: closest to WS")
+ggplot(tmin1_long |> filter(Plot_Name == "ACAD-039"), 
+       aes(x = year, y = tmin_1, group = station, color = station, shape = station, fill = station)) +
+  geom_point() + geom_smooth(se = F) + forestNETN::theme_FHM() + theme(legend.position = 'none') + 
+  labs(y = "Jan. Min. Temp. C",  x = NULL, subtitle = "ACAD-039: closest to WS") +
+  scale_fill_manual(values = c("dm_tmin_mean_1" = "orange", 
+                               "pr_tmin_01" = "dodgerblue", 
+                               "ws_tminc_1" = "#949494"), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) +
+  scale_color_manual(values = c("dm_tmin_mean_1" = "orange", 
+                                "pr_tmin_01" = "dodgerblue", 
+                                "ws_tminc_1" = "#949494"), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) +
+  scale_shape_manual(values = c("dm_tmin_mean_1" = 23, 
+                               "pr_tmin_01" = 21, 
+                               "ws_tminc_1" = 24), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) +
+  scale_size_manual(values = c("dm_tmin_mean_1" = 3.5, 
+                               "pr_tmin_01" = 3.5, 
+                               "ws_tminc_1" = 3), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) 
 
 tmin_jan_p36 <- 
-ws_dm_pr_plot(ws_comp_36, ws = ws_tminc_1, dm = dm_tmin_mean_1, pr = pr_tmin_01,
-              ylab = "Min. Temp. (C)", title = "ACAD-036: SCH far from WS")
+  ggplot(tmin1_long |> filter(Plot_Name == "ACAD-036"), 
+       aes(x = year, y = tmin_1, group = station, color = station, shape = station, fill = station)) +
+  geom_point() + geom_smooth(se = F) + forestNETN::theme_FHM() + theme(legend.position = 'none') + 
+  labs(y = "Jan. Min. Temp. C",  x = NULL, subtitle = "ACAD-036: SCH farthest east from WS") +
+  scale_fill_manual(values = c("dm_tmin_mean_1" = "orange", 
+                               "pr_tmin_01" = "dodgerblue", 
+                               "ws_tminc_1" = "#949494"), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) +
+  scale_color_manual(values = c("dm_tmin_mean_1" = "orange", 
+                                "pr_tmin_01" = "dodgerblue", 
+                                "ws_tminc_1" = "#949494"), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) +
+  scale_shape_manual(values = c("dm_tmin_mean_1" = 23, 
+                               "pr_tmin_01" = 21, 
+                               "ws_tminc_1" = 24), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) +
+  scale_size_manual(values = c("dm_tmin_mean_1" = 3.5, 
+                               "pr_tmin_01" = 3.5, 
+                               "ws_tminc_1" = 3), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) 
+
 
 tmin_jan_p64 <- 
-ws_dm_pr_plot(ws_comp_64, ws = ws_tminc_1, dm = dm_tmin_mean_1, pr = pr_tmin_01,
-              ylab = "Min. Temp. (C)", title = "ACAD-064: IAH far from WS", 
-              legend = 'bottom')
+  ggplot(tmin1_long |> filter(Plot_Name == "ACAD-064"), 
+       aes(x = year, y = tmin_1, group = station, color = station, shape = station, fill = station)) +
+  geom_point() + geom_smooth(se = F) + forestNETN::theme_FHM() + theme(legend.position = 'bottom') + 
+  labs(y = "Jan. Min. Temp. C",  x = NULL, subtitle = "ACAD-064: IAH farthest west from WS") +
+  scale_fill_manual(values = c("dm_tmin_mean_1" = "orange", 
+                               "pr_tmin_01" = "dodgerblue", 
+                               "ws_tminc_1" = "#949494"), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) +
+  scale_color_manual(values = c("dm_tmin_mean_1" = "orange", 
+                                "pr_tmin_01" = "dodgerblue", 
+                                "ws_tminc_1" = "#949494"), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) +
+  scale_shape_manual(values = c("dm_tmin_mean_1" = 23, 
+                               "pr_tmin_01" = 21, 
+                               "ws_tminc_1" = 24), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) +
+  scale_size_manual(values = c("dm_tmin_mean_1" = 3.5, 
+                               "pr_tmin_01" = 3.5, 
+                               "ws_tminc_1" = 3), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) 
 
 cowplot::plot_grid(tmin_jan_p39, tmin_jan_p36, tmin_jan_p64, ncol = 1, 
                    rel_heights = c(0.3, 0.3, 0.4))
 
 ```
 </details>
-<details open><summary class='drop'><h5>Total July Precip. (mm)</h5></summary>
-```{r message = FALSE, warning = FALSE, height = 6}
-ppt_july_p39 <- 
-ws_dm_pr_plot(ws_comp_39, ws = ws_pcpmm_7, dm = dm_ppt_sum_7, pr = pr_ppt_07,
-              ylab = "July Precip. (mm)", title = "ACAD-039: closest to WS")
+<details open><summary class='drop'>Total July Precip. (mm)</summary>
+```{r message = FALSE, warning = FALSE, fig.height = 6}
+ppt7_long <- clim_dat |> filter(Plot_Name %in% c("ACAD-039", "ACAD-064", "ACAD-036")) |> 
+  select(Plot_Name, year, ws_pcpmm_7, dm_ppt_sum_7, pr_ppt_07) |> 
+  pivot_longer(ws_pcpmm_7:pr_ppt_07, names_to = "station", values_to = "ppt_7")
 
-ppt_july_p36 <- 
-ws_dm_pr_plot(ws_comp_36, ws = ws_pcpmm_7, dm = dm_ppt_sum_7, pr = pr_ppt_07,
-              ylab = "July Precip. (mm)", title = "ACAD-036: SCH far from WS")
+ppt_jul_p39 <- 
+ggplot(ppt7_long |> filter(Plot_Name == "ACAD-039"), 
+       aes(x = year, y = ppt_7, group = station, color = station, shape = station, fill = station)) +
+  geom_point() + geom_smooth(se = F) + forestNETN::theme_FHM() + theme(legend.position = 'none') + 
+  labs(y = "July Precip.",  x = NULL, subtitle = "ACAD-039: closest to WS") +
+  scale_fill_manual(values = c("dm_ppt_sum_7" = "orange", 
+                               "pr_ppt_07" = "dodgerblue", 
+                               "ws_pcpmm_7" = "#949494"), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) +
+  scale_color_manual(values = c("dm_ppt_sum_7" = "orange", 
+                                "pr_ppt_07" = "dodgerblue", 
+                                "ws_pcpmm_7" = "#949494"), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) +
+  scale_shape_manual(values = c("dm_ppt_sum_7" = 23, 
+                               "pr_ppt_07" = 21, 
+                               "ws_pcpmm_7" = 24), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) +
+  scale_size_manual(values = c("dm_ppt_sum_7" = 3.5, 
+                               "pr_ppt_07" = 3.5, 
+                               "ws_pcpmm_7" = 3), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) 
 
-ppt_july_p64 <- 
-ws_dm_pr_plot(ws_comp_64, ws = ws_pcpmm_7, dm = dm_ppt_sum_7, pr = pr_ppt_07,
-              ylab = "July Precip. (mm)", title = "ACAD-064: IAH far from WS", legend = 'bottom')
+ppt_jul_p36 <- 
+  ggplot(ppt7_long |> filter(Plot_Name == "ACAD-036"), 
+       aes(x = year, y = ppt_7, group = station, color = station, shape = station, fill = station)) +
+  geom_point() + geom_smooth(se = F) + forestNETN::theme_FHM() + theme(legend.position = 'none') + 
+  labs(y = "July Precip.",  x = NULL, subtitle = "ACAD-036: SCH farthest east from WS") +
+  scale_fill_manual(values = c("dm_ppt_sum_7" = "orange", 
+                               "pr_ppt_07" = "dodgerblue", 
+                               "ws_pcpmm_7" = "#949494"), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) +
+  scale_color_manual(values = c("dm_ppt_sum_7" = "orange", 
+                                "pr_ppt_07" = "dodgerblue", 
+                                "ws_pcpmm_7" = "#949494"), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) +
+  scale_shape_manual(values = c("dm_ppt_sum_7" = 23, 
+                               "pr_ppt_07" = 21, 
+                               "ws_pcpmm_7" = 24), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) +
+  scale_size_manual(values = c("dm_ppt_sum_7" = 3.5, 
+                               "pr_ppt_07" = 3.5, 
+                               "ws_pcpmm_7" = 3), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) 
 
-cowplot::plot_grid(ppt_july_p39, ppt_july_p36, ppt_july_p64, ncol = 1,
+
+ppt_jul_p64 <- 
+  ggplot(ppt7_long |> filter(Plot_Name == "ACAD-064"), 
+       aes(x = year, y = ppt_7, group = station, color = station, shape = station, fill = station)) +
+  geom_point() + geom_smooth(se = F) + forestNETN::theme_FHM() + theme(legend.position = 'bottom') + 
+  labs(y = "July Precip.",  x = NULL, subtitle = "ACAD-064: IAH farthest west from WS") +
+  scale_fill_manual(values = c("dm_ppt_sum_7" = "orange", 
+                               "pr_ppt_07" = "dodgerblue", 
+                               "ws_pcpmm_7" = "#949494"), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) +
+  scale_color_manual(values = c("dm_ppt_sum_7" = "orange", 
+                                "pr_ppt_07" = "dodgerblue", 
+                                "ws_pcpmm_7" = "#949494"), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) +
+  scale_shape_manual(values = c("dm_ppt_sum_7" = 23, 
+                               "pr_ppt_07" = 21, 
+                               "ws_pcpmm_7" = 24), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) +
+  scale_size_manual(values = c("dm_ppt_sum_7" = 3.5, 
+                               "pr_ppt_07" = 3.5, 
+                               "ws_pcpmm_7" = 3), 
+                    name = "Data Type",
+                    labels = c("DayMet","Prism", "Weather Station")) 
+
+cowplot::plot_grid(ppt_jul_p39, ppt_jul_p36, ppt_jul_p64, ncol = 1, 
                    rel_heights = c(0.3, 0.3, 0.4))
 ```
-</details></details>
+</details>
 
-<details open><summary class='drop'><h4>Overall Comparisons</h4></summary>
-<details open><summary class='drop'><h5>Average Maximum Temperature in July (C)</h5></summary>
-```{r, message = F, warning = F}
+<h3>Overall Comparisons</h3>
+<details open><summary class='drop'>Average Maximum Temperature in July (C)</summary>
+```{r, message = F, warning = F, fig.height = 4}
 ggplot(clim_dat, aes(x = ws_tmaxc_7)) + forestNETN::theme_FHM() +
   geom_point(aes(y = dm_tmax_mean_7, fill = "DayMet", shape = "DayMet"), size = 2) +
   geom_point(aes(y = pr_tmax_07, fill = "Prism", shape = "Prism"), size = 2) +
@@ -135,14 +317,22 @@ ggplot(clim_dat, aes(x = ws_tmaxc_7)) + forestNETN::theme_FHM() +
                      name = "Data Type",
                      labels = c("DayMet", "Prism")) +
   labs(x = "Weather Station Data", y = "Raster Data", subtitle = "Max. July Temp.") +
-  geom_abline(slope = 1) + theme(aspect.ratio = 1, legend.title = element_blank()) 
+  geom_abline(slope = 1, intercept = 0) + theme(aspect.ratio = 1, legend.title = element_blank()) 
 
 
 ```
 </details>
 
-<details open><summary class='drop'><h5>Average Minimum Temperature in January (C)</h5></summary>
+<details open><summary class='drop'>Avg. Max July Temp. Correlations</summary>
 ```{r}
+ggpairs(clim_dat |> select(WS = ws_tmaxc_7, DayMet = dm_tmax_mean_7, Prism = pr_tmax_07)) + 
+  forestNETN::theme_FHM() +
+  labs(title = "July Max Temp.")
+```
+</details>
+
+<details open><summary class='drop'>Average Minimum Temperature in January (C)</summary>
+```{r, fig.height = 4}
 ggplot(clim_dat, aes(x = ws_tminc_1)) + forestNETN::theme_FHM() +
   geom_point(aes(y = dm_tmin_mean_1, fill = "DayMet", shape = "DayMet"), size = 2) +
   geom_point(aes(y = pr_tmin_01, fill = "Prism", shape = "Prism"), size = 2.5) +
@@ -153,14 +343,22 @@ ggplot(clim_dat, aes(x = ws_tminc_1)) + forestNETN::theme_FHM() +
                      name = "Data Type",
                      labels = c("DayMet", "Prism")) +
   labs(x = "Weather Station Data", y = "Raster Data", subtitle = "Min. January Temp.") +
-  geom_abline(slope = 1) + theme(aspect.ratio = 1, legend.title = element_blank()) 
+  geom_abline(slope = 1, intercept = 0) + theme(aspect.ratio = 1, legend.title = element_blank()) 
 
 
 ```
 </details>
 
-<details open><summary class='drop'><h5>Total July Precip. (mm)</h5></summary>
+<details open><summary class='drop'>Avg. Min January Temp. Correlations</summary>
 ```{r}
+ggpairs(clim_dat |> select(WS = ws_tminc_1, DayMet = dm_tmin_mean_1, Prism = pr_tmin_01)) + forestNETN::theme_FHM() +
+  labs(title = "Jan. Min Temp.")
+```
+</details>
+
+
+<details open><summary class='drop'>Total July Precip. (mm)</summary>
+```{r, fig.height = 4}
 ggplot(clim_dat, aes(x = ws_pcpmm_7)) + forestNETN::theme_FHM() +
   geom_point(aes(y = dm_ppt_sum_7, fill = "DayMet", shape = "DayMet"), size = 2) +
   geom_point(aes(y = pr_ppt_07, fill = "Prism", shape = "Prism"), size = 2.5) +
@@ -171,15 +369,23 @@ ggplot(clim_dat, aes(x = ws_pcpmm_7)) + forestNETN::theme_FHM() +
                      name = "Data Type",
                      labels = c("DayMet", "Prism")) +
   labs(x = "Weather Station Data", y = "Raster Data", subtitle = "July Precip. (mm)") +
-  geom_abline(slope = 1) + theme(aspect.ratio = 1, legend.title = element_blank()) 
+  geom_abline(slope = 1, intercept = 0) + theme(aspect.ratio = 1, legend.title = element_blank()) 
 
 
 ```
-</details></details>
+</details>
 
-<details open><summary class='drop'><h4> Standardized Precipitation-Evapotranspiration Index (SPEI)</h4></summary>
-<details open><summary class='drop'><h5>August 1-month SPEI</h5></summary>
+<details open><summary class='drop'>July Precip. Correlations</summary>
 ```{r}
+ggpairs(clim_dat |> select(WS = ws_pcpmm_7, DayMet = dm_ppt_sum_7, Prism = pr_ppt_07)) + forestNETN::theme_FHM() +
+  labs(title = "July Precip")
+```
+</details>
+
+
+<h3> Standardized Precipitation-Evapotranspiration Index (SPEI)</h3>
+<details open><summary class='drop'>August 1-month SPEI</summary>
+```{r, fig.height = 4}
 ggplot(clim_dat, aes(x = year)) + forestNETN::theme_FHM() +
   geom_point(aes(y = dm_SPEI01_8, color = "DayMet", shape = "DayMet"), size = 2) +
   geom_smooth(aes(x = year, y = dm_SPEI01_8), color = 'dodgerblue3', se = F) +
@@ -195,12 +401,12 @@ ggplot(clim_dat, aes(x = year)) + forestNETN::theme_FHM() +
                      name = "Data Type",
                      labels = c("DayMet", "Global")) +
   labs(x = "Year", y = "August SPEI-1 month") +
-  geom_abline(slope = 1) + theme(aspect.ratio = 1, legend.title = element_blank()) 
+  geom_abline(slope = 1, intercept = 0) + theme(aspect.ratio = 1, legend.title = element_blank()) 
 ```
 </details>
 
-<details open><summary class='drop'><h5>August 3-month SPEI</h5></summary>
-```{r}
+<details open><summary class='drop'>August 3-month SPEI</summary>
+```{r, fig.height = 4}
 ggplot(clim_dat, aes(x = year)) + forestNETN::theme_FHM() +
   geom_point(aes(y = dm_SPEI03_8, color = "DayMet", shape = "DayMet"), size = 2) +
   geom_smooth(aes(x = year, y = dm_SPEI03_8), color = 'dodgerblue3', se = F) +
@@ -216,7 +422,7 @@ ggplot(clim_dat, aes(x = year)) + forestNETN::theme_FHM() +
                      name = "Data Type",
                      labels = c("DayMet", "Global")) +
   labs(x = "Year", y = "August SPEI-3 month") +
-  geom_abline(slope = 1) + theme(aspect.ratio = 1, legend.title = element_blank()) 
+  geom_abline(slope = 1, intercept = 0) + theme(aspect.ratio = 1, legend.title = element_blank()) 
 
 ```
-</details></details>
+</details>
