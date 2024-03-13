@@ -4,19 +4,20 @@ output: html_document
 
 ```{r setup, include = FALSE}
 knitr::opts_chunk$set(echo = TRUE)
+options(digits = 6, scipen = 100)
 ```
 
-### GAMMs to model raw ring width growth of Red spruce (<i>Picea rubens</i>)
+<h5> GAMMs to model raw ring width growth of Red spruce (<i>Picea rubens</i>)</h5> {.tabset}
+### Compile Data
 ```{r import}
 library(tidyverse)
 library(GGally) #for sploms/corr checking
 library(mgcv)
 library(gratia) # easy plotting, but couldn't get main plotting functions to work 
 library(mgcViz) # more customized gam plotting
+library(corrr) # correlation matrix
 
 ctrl <- gam.control(trace = TRUE) # So see ~ progress of gam
-
-#### * Set up training and testing dataset by plot * ####
 
 # Used Compiling_covariates.R to compile the main dataset.
 cordat_pre <- read.csv("./data/ACAD_final_core_data_20240311.csv") 
@@ -41,7 +42,6 @@ num_check <- cordat %>% select(Plot_Name, coreID, species, Crown_Class) %>% uniq
   group_by(species, Crown_Class) %>% tally()
 
 num_check
-
 ```
 
 # Split data into training/testing datasets for cross-validation
@@ -60,42 +60,30 @@ table(piru_codom_full$Training)
 piru_codom <- piru_codom_full |> filter(Training == "Train")
 
 ```
-### Exploratory Data Analysis
+
+### Exploratory Data Analysis {.tabset}
 ```{r}
-ggpairs(piru_codom |> select(RRWmm,
-                             northiness, eastness, elev_m, PlotSlope, 
-                             BA_pct_lg, live_stems_ha, DBH))
-# Best vars: BA_pct_lg, elev_m, DBH
+cormat_rrw <- piru_codom |> select_if(is.numeric) |> correlate() |> 
+  focus(RRWmm) |> filter(abs(RRWmm) >= 0.1)
 
-ggpairs(piru_codom |> select(RRWmm, 
-                             horizon_depth, soilpH, BaseSat, AlSat, C_N, Ca_Al))
+# cormat_bai <- piru_codom |> select_if(is.numeric) |> correlate() |> 
+#   focus(BAIcm2) |> filter(abs(BAIcm2) >= 0.1)
 
-# Best vars: hor depth, C_N Ca:Al
+ggplot(piru_codom, aes(x = Year, y = RRWmm)) + geom_point() + geom_smooth() + 
+  forestNETN::theme_FHM()
 
-ggpairs(piru_codom |> select(RRWmm, 
-                             NO3, NO3_lag1, SO4, SO4_lag1,
-                             pH, pH_lag1, tmin_wint, tmin_wint_lag1, 
-                             tmax_gs, tmax_gs_lag1, ppt_gs, ppt_gs_lag1,
-                             ppt_8, ppt_8_lag1
-                             ))
-# No good vars
 
 ggpairs(piru_codom |> select(RRWmm,
-                             SPEI01_4_roll5, SPEI01_5_roll5,
-                             SPEI01_6_roll5, SPEI01_7_roll5,
-                             SPEI01_8_roll5, SPEI01_9_roll5))
-# No good vars
+                             est_age, pctTC, horizon_depth, C_N, Pct_Bryophyte,
+                             liveBA_m2ha, BA_pct_lg, pctTC, Ca_Al, DBH, 
+                             ppt_8_roll5, ppt_gs_roll5, SPEI01_8_roll5, SPEI03_8_roll5,
+                             soilpH, Pct_Rock, elev_m))
 
-ggpairs(piru_codom |> select(RRWmm,
-                             SPEI03_4_roll5, SPEI03_5_roll5,
-                             SPEI03_6_roll5, SPEI03_7_roll5,
-                             SPEI03_8_roll5, SPEI03_9_roll5))
-
-ggpairs(piru_codom |> select(RRWmm, 
-                             NO3_roll5, SO4_roll5, pH_roll5, 
-                             tmin_wint_roll3, tmax_gs_roll3, ppt_gs_roll3, 
-                             ppt_8_roll3))
-
+cormat <- piru_codom |> select(RRWmm,
+                               est_age, pctTC, horizon_depth, C_N, Pct_Bryophyte,
+                               liveBA_m2ha, BA_pct_lg, pctTC, Ca_Al, DBH, 
+                               ppt_8_roll5, ppt_gs_roll5, SPEI01_8_roll5, SPEI03_8_roll5,
+                               soilpH, Pct_Rock, elev_m, pH, pH_roll5) |> correlate()
 
 ggplot(piru_codom, aes(x = Year, y = SPEI03_9_roll3)) +
   geom_point() + geom_smooth() + forestNETN::theme_FHM() + 
@@ -190,13 +178,13 @@ hist(piru_codom$PlotSlope)
 
 gam_piru <- gam(logRRW ~ forest_type + BA_pct_lg + #dbh_cent + 
                          elev_cent + I(elev_cent^2) + 
+                         fire1947 +
                          #northiness + 
-                         est_age + PlotSlope +
-                         Ca_Al + C_N +
+                         dbh_std + #est_age_std + 
+                         pctTC + horizon_depth + soilpH +
                          s(year_cent, k = 10) + 
-                         s(tmin_wint_roll3, by = year_cent, k = 5) +
-                         s(NO3_roll3, by = year_cent, k = 5) +
-                         s(SPEI03_9_roll3, by = year_cent, k = 5) +
+                         s(ppt_8_roll5, by = year_cent, k = 5) +
+                         #s(SPEI03_9_roll3, by = year_cent, k = 5) +
                          #ti(NO3_roll5, tmin_wint_roll5, k = c(10, 10)) +
                          s(Plot_Name, bs = 're', k = 40) +   
                             # each plot/crown combination has its own intercept
@@ -223,12 +211,9 @@ g <- getViz(gam_piru)
 print(plot(g, allTerms = T), pages = 1)
 check(g)
 
-vis.gam(gam_piru, view = c("year_cent", "SPEI03_9_roll3"), plot.type = "contour", color = 'topo')
-vis.gam(gam_piru, view = c("SPEI03_9_roll3", "NO3_roll3"), plot.type = "contour", color = 'topo')
-
-vis.gam(gam_piru, view = c("SPEI03_9_roll3", "elev_cent"), plot.type = 'contour')
-vis.gam(gam_piru, view = c('year_cent', "SPEI03_9_roll3"), plot.type = 'contour') # drought severity has increased over time
-vis.gam(gam_piru, view = c('Ca_Al', "C_N"), plot.type = 'contour')
+vis.gam(gam_piru, view = c("year_cent", "ppt_8_roll5"), plot.type = "contour", color = 'topo')
+vis.gam(gam_piru, view = c("ppt_8_roll5", "elev_cent"), plot.type = 'contour')
+vis.gam(gam_piru, view = c('ppt_8_roll5', "dbh_std"), plot.type = 'contour')
 
 plot(g, residuals = TRUE)
 

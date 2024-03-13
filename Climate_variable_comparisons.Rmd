@@ -426,3 +426,4 @@ ggplot(clim_dat, aes(x = year)) + forestNETN::theme_FHM() +
 
 ```
 </details>
+
