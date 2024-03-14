@@ -3,6 +3,7 @@
 #--------------------------------------------
 
 library(tidyverse)
+library(lubridate)
 library(zoo) # for rollmean
 
 # Simplifying dataset to only include variables of interest
@@ -56,14 +57,114 @@ simpd2 <- simpd |>
   ungroup() |> 
   select(Plot_Name:pH, ppt_4:ppt_9, ppt_gs, tmax_gs, tmin_wint, 
          SPEI01_1:SPEI03_12)
-head(simpd2)
-names(simpd2)
-?pmin
+
+#----- Calculate growing season length. -----
+comb_daymet <- function(plot){
+  
+  df <- read.table(paste0("./data/daymet/", plot, "_1980_2022.csv"), 
+                   sep = ",", skip = 7, header = T) |> 
+    mutate(Plot_Name = plot) |> 
+    select(Plot_Name, everything())
+  colnames(df) <- c("Plot_Name", "year", "yday", "dayls", 'ppt', 
+                    'srad', 'swe', 'tmaxc', 'tminc', 'vp')
+  return(df)
+}
+
+plots <- sort(unique(simpd2$Plot_Name)) 
+daymet_comb <- map(plots, ~comb_daymet(.)) |> list_rbind()
+daymet_comb <- daymet_comb |> mutate(date = as.Date(yday-1, origin = paste0(year, "-01-01")),
+                                     month = month(date),
+                                     tmean = (tmaxc + tminc)/2) 
+
+# Start of growing season 5C is triggered by first 6-day span of daily mean temps > 5 C, 
+# with the start the first day of that 6-day stretch. The end of the growing season is the 
+# first day of the first stretch of 6-days with daily mean temp < 5 C after July 1 (doy = 183)
+calc_gsl_5c <- function(dat, yr, plot){
+  gs <- data.frame(rle(dat$tmean > 5)[1], rle(dat$tmean > 5)[2])
+  gs$consdays <- cumsum(gs$lengths)
+  gs_start <- gs$consdays[which(gs$values == TRUE & 
+                                  gs$lengths >= 6)[1]-1] + 1 #takes the previous row then adds 1 day
+  gs_end <- gs$consdays[which(gs$consdays > 183 & 
+                              gs$lengths >= 6 &
+                              gs$values == FALSE)[1]-1] + 1
+  gsl <- (gs_end - 5) - (gs_start - 5) 
+  gsldata <- data.frame(Plot_Name = plot, year = yr, gs_5c_length = gsl)
+  return(gsldata)
+}
+
+years <- 1980:2022
+plot_years <- expand.grid(plots, years) |> select(Plot_Name = Var1, year = Var2) |> 
+  arrange(Plot_Name, year)
+
+gsl_5c_data <- 
+  map2_dfr(plot_years$year, plot_years$Plot_Name, 
+           function(yr, plt){
+                           data1 <- daymet_comb |> filter(year == yr) |> filter(Plot_Name == plt)
+                           gsl <- calc_gsl_5c(dat = data1, yr = yr, plot = plt)
+                     }
+)
+
+# Start of growing season FF is number of days between last killing freeze of -2.2C in spring and first
+# killing freeze in fall, based on tmin.
+calc_gsl_ff <- function(dat, yr, plot){
+  gs <- data.frame(rle(dat$tminc > -2.22)[1], rle(dat$tminc > -2.22)[2]) # killing frost temp
+  gs$consdays <- cumsum(gs$lengths)
+  # Find at least 30 cons. days without killing frost, then take the previous rowsum then add 1 day
+  gs_start <- gs$consdays[which(gs$values == TRUE & 
+                                gs$lengths >= 30)[1]-1] + 1 
+  # Find the first killing frost after July 1
+  gs_end <- gs$consdays[which(gs$consdays > 183 & 
+                              gs$values == FALSE)[1]-1] + 1
+  gsl <- (gs_end - 5) - (gs_start - 5) 
+  gsldata <- data.frame(Plot_Name = plot, year = yr, gs_ff_length = gsl)
+  return(gsldata)
+}
+
+gsl_ff_data <- 
+  map2_dfr(plot_years$year, plot_years$Plot_Name, 
+           function(yr, plt){
+             data1 <- daymet_comb |> filter(year == yr) |> filter(Plot_Name == plt)
+             gsl <- calc_gsl_ff(dat = data1, yr = yr, plot = plt)
+           }
+  )
+
+ggplot(gsl_ff_data |> filter(Plot_Name == "ACAD-007"), aes(x = year, y = gs_ff_length)) +
+  geom_point() + geom_smooth() + forestNETN::theme_FHM()
+
+# Calculating number of days where max temp is > 5c in spring and fall to capture shoulder growing seasons
+calc_5c_days <- function(dat, yr, plot){
+  spring <- dat |> filter(yday < 121) # May 1
+  fall <- dat |> filter(yday > 273) # Sept 30
+  spring_5c <- data.frame(rle(spring$tmax > 5)[1], rle(spring$tmax > 5)[2]) |> filter(values == "TRUE")
+  spring_5c_sum <- sum(spring_5c$lengths)
+  
+  fall_5c <- data.frame(rle(fall$tmax > 5)[1], rle(fall$tmax > 5)[2]) |> filter(values == "TRUE")
+  fall_5c_sum <- sum(fall_5c$lengths)
+  
+  gsldata <- data.frame(Plot_Name = plot, year = yr, 
+                        spring_5c_days = spring_5c_sum, fall_5c_days = fall_5c_sum)
+  return(gsldata)
+}
+
+
+seas_5c_data <- 
+  map2_dfr(plot_years$year, plot_years$Plot_Name, 
+           function(yr, plt){
+             data1 <- daymet_comb |> filter(year == yr) |> filter(Plot_Name == plt)
+             gsl <- calc_5c_days(dat = data1, yr = yr, plot = plt)
+           }
+  )
+
+ggplot(seas_5c_data |> filter(Plot_Name == "ACAD-001"), aes(x = year, y = spring_5c_days)) +
+  geom_point() + geom_smooth() + forestNETN::theme_FHM()
+ggplot(seas_5c_data |> filter(Plot_Name == "ACAD-001"), aes(x = year, y = fall_5c_days)) +
+  geom_point() + geom_smooth() + forestNETN::theme_FHM()
+
+gs_dfs <- list(gsl_5c_data, gsl_ff_data, seas_5c_data)
+gs_data <- reduce(gs_dfs, full_join, by = c("Plot_Name", "year"))
+write.csv(gs_data, "./data/ACAD_growing_season_metrics.csv", row.names = F)
 
 # Calculate a rolling average to capture cumulative effects of previous dry or wet years
-var = "SPEI01_3"
-roll = 5
-
 roll_fun <- function(dat = simpd2, var, roll){
   #xcol <- paste0(var, "_roll", roll)
   dat1 <- dat |> select(Plot_Name, coreID, Year, all_of(var)) |> 
@@ -82,46 +183,42 @@ roll_fun <- function(dat = simpd2, var, roll){
   return(dat2)
 }
 
-lag_fun <- function(dat, x, lag){
-  dat1 <- dat |> select(Plot_Name, coreID, Year, all_of(x)) |> 
+lag_fun <- function(dat, var, lag){
+  dat1 <- dat |> select(Plot_Name, coreID, Year, all_of(var)) |> 
     arrange(Plot_Name, coreID, Year) |> 
     group_by(Plot_Name, coreID) |> 
-    mutate("{x}_lag{lag}" := dplyr::lag(!!sym(x), n = lag)) |> 
-    ungroup() |> select(-all_of(x)) |> data.frame()
-  col = c(paste0(x, "_lag", lag))
+    mutate("{var}_lag{lag}" := dplyr::lag(!!sym(var), n = lag)) |> 
+    ungroup() |> select(-all_of(var)) |> data.frame()
+  col = c(paste0(var, "_lag", lag))
   dat2 <- data.frame(dat1[,ncol(dat1)])
   names(dat2) <- col
   return(dat2)
 }
-
-# head(roll_fun(simpd2, "SPEI03_9", 2))
-# head(lag_fun(simpd2, "SPEI03_9", 1))
-# head(simpd2$SPEI03_9)
 
 vars <- c("SPEI01_4", "SPEI01_5", "SPEI01_6", "SPEI01_7", 
           "SPEI01_8", "SPEI01_9", "SPEI01_10", 
           "SPEI03_4", "SPEI03_5", "SPEI03_6", "SPEI03_7", 
           "SPEI03_8", "SPEI03_9", "SPEI03_10",
           "NO3", "SO4", "pH", "tmin_wint", "tmax_gs", "ppt_gs", 
-          "ppt_8", "ppt_4")
+          "ppt_8", "ppt_4",
+          "gs_5c_length", "gs_ff_length", "spring_5c_days", "fall_5c_days")
 rolls <- c(2:5)
 
 roll_df <- data.frame(vars = rep(vars, each = length(rolls)),
                       rolls = rep(rolls, length(vars)))
 
+names(simpd2)
 
-core_rolls <- cbind(simpd2, ##|> select(Plot_Name, coreID, Year),
+simpd3 <- full_join(simpd2, gs_data, by = c("Plot_Name", "Year" = "year"))
+
+core_rolls <- cbind(simpd3, ##|> select(Plot_Name, coreID, Year),
                     map2(roll_df$vars, roll_df$rolls,
-                       ~roll_fun(simpd2, var = .x, roll = .y)) |> list_cbind())
+                       ~roll_fun(simpd3, var = .x, roll = .y)) |> list_cbind())
 
 core_lagrolls <- cbind(core_rolls, 
                        map(vars, 
                            ~lag_fun(core_rolls, var = ., lag = 1)) |> 
-                         list_cbind())
-
-ggplot(core_lagrolls |> filter(Plot_Name == "ACAD-101"),
-       aes(x = Year, y = SPEI03_8_roll5)) + geom_point() + geom_smooth()
-
+                           list_cbind())
 
 table(core_lagrolls$Crown_Class)
 table(core_lagrolls$Year) #1980 to 2022
