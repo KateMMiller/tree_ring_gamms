@@ -210,6 +210,7 @@ roll_df <- data.frame(vars = rep(vars, each = length(rolls)),
 names(simpd2)
 
 simpd3 <- full_join(simpd2, gs_data, by = c("Plot_Name", "Year" = "year"))
+head(simpd3)
 
 core_rolls <- cbind(simpd3, ##|> select(Plot_Name, coreID, Year),
                     map2(roll_df$vars, roll_df$rolls,
@@ -223,6 +224,7 @@ core_lagrolls <- cbind(core_rolls,
 table(core_lagrolls$Crown_Class)
 table(core_lagrolls$Year) #1980 to 2022
 hist(core_lagrolls$Year)
+names(core_lagrolls)
 write.csv(core_lagrolls, "./data/ACAD_final_core_data_20240311.csv", row.names = F)
 
 
