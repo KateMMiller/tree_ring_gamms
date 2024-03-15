@@ -1,0 +1,281 @@
+---
+output: html_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(digits = 6, scipen = 100)
+```
+
+<h5> GAMMs to model raw ring width growth of Red spruce (<i>Picea rubens</i>)</h5> {.tabset}
+### Compile Data
+```{r import}
+library(tidyverse)
+library(GGally) #for sploms/corr checking
+library(mgcv)
+library(gratia) # easy plotting, but couldn't get main plotting functions to work 
+library(mgcViz) # more customized gam plotting
+library(corrr) # correlation matrix
+library(forecast) # for auto.arima
+library(corrplot) # for inspecting collinearity
+library(tseries) # for Dickey-Fuller test of stationarity
+ctrl_gam <- gam.control(trace = TRUE, nthreads = 4, ncv.threads = 4) #// processing
+#ctrl_nlme <- nlme::nlmeControl(maxIter = 1000, msVerbose = TRUE)
+
+# Used Compiling_covariates.R to compile the main dataset.
+cordat_pre <- read.csv("./data/ACAD_final_core_data_20240315.csv") 
+table(cordat_pre$Crown_Class)
+names(cordat_pre)
+cordat <- cordat_pre %>% filter(Crown_Class %in% c(3, 4)) 
+table(cordat$Crown_Class)
+
+# have to convert to factors, otherwise get:
+    # Error in names(dat) <- object$term : 'names' attribute [2] must be the same length as the vector [0]
+cordat$Plot_Name <- as.factor(cordat$Plot_Name)
+cordat$coreID <- as.factor(cordat$coreID)
+cordat$species <- as.factor(cordat$species)
+cordat$crown_fac <- as.factor(ifelse(cordat$Crown_Class == 3, "Codom", "Inter"))
+cordat$year_fac <- as.factor(cordat$Year)
+str(cordat$crown_fac)
+table(cordat$crown_fac, cordat$Crown_Class)
+
+table(cordat$forest_type)
+
+num_check <- cordat %>% select(Plot_Name, coreID, species, Crown_Class) %>% unique() %>% 
+  group_by(species, Crown_Class) %>% tally()
+
+num_check
+```
+
+# Split data into training/testing datasets for cross-validation
+```{r}
+set.seed(20240227)
+piru_codom1 <- cordat |> filter(species == 'PIRU') |> filter(Crown_Class == 3)
+piru_cores <- data.frame(coreID = sort(unique(piru_codom1$coreID)))
+samp <- sample.int(n = nrow(piru_cores), size = floor(0.80*nrow(piru_cores)), replace = F)
+piru_core_train <- piru_cores[samp,]
+
+piru_codom_full <- piru_codom1 |> 
+  mutate(Training = ifelse(coreID %in% piru_core_train, "Train", "Test")) 
+table(piru_codom_full$Training)
+#845/(3246+845) #~20%
+
+piru_codom <- piru_codom_full |> filter(Training == "Train")
+
+```
+
+### Exploratory Data Analysis {.tabset}
+```{r}
+cormat_bai <- piru_codom |> select_if(is.numeric) |> correlate() |> 
+   focus(BAIcm2) |> filter(abs(BAIcm2) >= 0.15) 
+
+ggplot(piru_codom, aes(x = Year, y = BAIcm2, color = coreID)) + 
+  geom_point() + geom_smooth(se = F) + theme(legend.position = 'none') + 
+  forestNETN::theme_FHM() + scale_color_viridis_d()
+
+# ggpairs(piru_codom |> select(BAIcm2,
+#                              BA_pct_lg, est_age, live_stems_ha, DBH, northiness,
+#                              pctTC, C_N, horizon_depth, Ca_Al, soilpH,
+#                              NO3_roll5, pH_roll5,
+#                            	 spring_5c_days_roll5, 
+#                              SPEI01_5_roll4, SPEI03_10_roll5, 
+#                              #ppt_4_roll5, ppt_8_roll5, 
+#                              ppt_gs_roll5,
+#                              ))
+
+cor_mat <- 
+round(cor(piru_codom[,c("BAIcm2", "BA_pct_lg", "est_age", "live_stems_ha", "DBH", 'northiness', 
+                        'pctTC', 'C_N', 'horizon_depth', 'Ca_Al', 'soilpH',
+                        'NO3_roll5', 'pH_roll5', 
+                        'spring_5c_days_roll5', 'SPEI01_5_roll4', 'SPEI03_10_roll5',
+                        'ppt_gs_roll5')], use = 'pairwise.complete.obs'),2)
+
+corrplot(cor_mat, method = 'circle')
+# Variables highly correlated
+
+ggplot(piru_codom, aes(x = Year, y = SPEI01_5)) +
+  geom_point() + geom_smooth(se = F) + 
+  forestNETN::theme_FHM() + 
+  geom_point(aes(y = SPEI01_5_roll5), color = 'grey') +
+  geom_smooth(aes(y = SPEI01_5_roll5, x = Year), color = 'dimgrey', se = F) +
+  scale_x_continuous(breaks = seq(1980, 2020, by = 2))
+
+ggplot(piru_codom, aes(x = Year, y = ppt_4_roll5)) +
+  geom_point() + geom_smooth() + forestNETN::theme_FHM()
+
+ggplot(piru_codom, aes(x = Year, y = tmax_gs_roll5)) +
+  geom_point() + geom_smooth() + forestNETN::theme_FHM()
+
+ggplot(piru_codom, aes(x = Year, y = gs_5c_length_roll5)) +
+  geom_point() + geom_smooth() + forestNETN::theme_FHM()
+
+ggplot(piru_codom, aes(x = Year, y = tmin_wint_roll5)) +
+  geom_point() + geom_smooth() + forestNETN::theme_FHM()
+
+ggplot(piru_codom, aes(x = Year, y = NO3_roll3)) +
+  geom_point() + geom_smooth() + forestNETN::theme_FHM()
+
+ggplot(piru_codom, aes(x = Year, y = BAIcm2, color = forest_type, fill = forest_type)) + 
+  geom_point(alpha = 0.2) + geom_smooth() +
+  theme(legend.position = 'right') + forestNETN::theme_FHM()
+
+ggplot(piru_codom, aes(x = Year, y = RRWmm, color = factor(fire1947), 
+                       fill = factor(fire1947))) + 
+  geom_point(alpha = 0.2) + geom_smooth() +
+  theme(legend.position = 'right') + forestNETN::theme_FHM()
+
+ggplot(piru_codom, aes(x = Year, y = BAIcm2, color = forest_type, fill = forest_type)) +   geom_point(alpha = 0.2) + geom_smooth() +
+  theme(legend.position = 'right') + forestNETN::theme_FHM()
+
+```
+
+
+```{r piru_gam}
+# can only use 1 core per plot and species for hierarchical modelling, so dropping any cores younger than 1984 (acid dep) then randomly selecting one with sample_n
+table(piru_codom$Year)
+hist(piru_codom$Year) # most cores cover 1984 to 2018
+
+piru84 <- piru_codom %>% filter(between(Year, 1984, 2020)) %>% select(coreID) %>% unique()
+head(piru84)
+
+piru_cores <- piru_codom %>% filter(coreID %in% piru84$coreID) %>% 
+  droplevels() %>%  group_by(Plot_Name) %>% 
+  sample_n(1) %>% select(Plot_Name, coreID) %>% ungroup() 
+
+piru_codom <- piru_codom %>% filter(coreID %in% piru_cores$coreID) |> 
+  filter(!is.na(RRWmm)) # drop plot 41 missing RRW
+
+check <- piru_codom %>% select(Plot_Name,crown_fac, coreID) %>% 
+  unique() %>% group_by(Plot_Name, crown_fac) %>% 
+  summarize(corecnt = n()) %>% filter(corecnt > 1) %>% nrow()# none
+
+check # all plots only have 1 core
+
+piru_codom$bai_cent = piru_codom$BAIcm2 - mean(piru_codom$BAIcm2)
+
+e <- piru_codom %>% select(BAIcm2) %>% filter(BAIcm2 != 0) %>% 
+  slice(which.min(BAIcm2)) %>% as.numeric()
+e #0.318
+
+hist(piru_codom$BAIcm2)
+hist(piru_codom$bai_cent)
+
+std01 <- function(x){(x-min(x))/(max(x)-min(x))}
+cent <- function(x){x - mean(x)}
+
+piru_codom <- piru_codom %>% 
+  mutate(logBAI = log(BAIcm2 + e), # remove 1 large negative outlier with log
+         year_cent = Year - min(Year),
+         elev_cent = cent(elev_m),
+         elev_std = std01(elev_m),
+         dbh_cent = cent(DBH),
+         dbh_std = std01(DBH),
+         live_stems_cent = cent(live_stems_ha),
+         live_stems_std = std01(live_stems_ha),
+         est_age_cent = cent(est_age),
+         est_age_std = std01(est_age)
+)
+
+write.csv(piru_codom, "./data/PIRU_codom_only_dataset_BAI.csv")
+
+ggplot(piru_codom, aes(x = Year, y = BAIcm2, group = coreID, color = forest_type)) +
+  geom_line() + forestNETN::theme_FHM() + scale_color_viridis_d()
+
+# Trying another model with more soils
+# Using first model to determine optimal ARMA
+hist(piru_codom$elev_m)
+hist(piru_codom$DBH)
+hist(piru_codom$rrw_cent)
+hist(piru_codom$northiness)
+hist(piru_codom$PlotSlope)
+
+ggplot(piru_codom, aes(x = elev_std, y = logBAI)) + geom_point() + geom_smooth()
+ggplot(piru_codom, aes(x = year_cent, y = logBAI)) + geom_point() + geom_smooth()
+ggplot(piru_codom, aes(x = pctTC, y = logBAI)) + geom_point() + geom_smooth()
+ggplot(piru_codom, aes(x = horizon_depth, y = logBAI)) + geom_point() + geom_smooth()
+ggplot(piru_codom, aes(x = ppt_8_roll5, y = logBAI)) + geom_point() + geom_smooth()
+ggplot(piru_codom, aes(x = gs_5c_length_roll5, y = logBAI)) + geom_point() + geom_smooth()
+ggplot(piru_codom, aes(x = northiness, y = logBAI)) + geom_point() + geom_smooth()
+ggplot(piru_codom, aes(x = PlotSlope, y = logBAI)) + geom_point() + geom_smooth()
+
+gam_piru <- gamm(logBAI ~ forest_type + BA_pct_lg +  
+                          fire1947 + elev_std +
+                          #dbh_std + 
+                          est_age_std + 
+                          pctTC + #horizon_depth + soilpH + #hor dep and soilph corr with pctTC
+                          s(year_cent, k = 10) + 
+                          s(northiness, k = 20) +
+                          te(spring_5c_days_roll5, year_cent, k = c(10,10)) +
+                          te(ppt_gs_roll5, year_cent, k = c(10, 10)) +
+                          te(NO3_roll5, year_cent, k = c(10, 10)) +
+                          s(Plot_Name, bs = 're', k = 40) +   
+                          s(year_fac, bs = 're', k = 5),
+                 family = gaussian, 
+                # family = tw(), #tweedie dist, will determine p 
+                data = piru_codom, method = "REML", control = ctrl_gam)
+
+adf.test(piru_codom$logBAI) #lagorder = 13 Dickey-Fuller = -6.8907
+acf(resid(gam_piru$lme)) # acf drops below 0 at 6; q = 6 
+pacf(resid(gam_piru$lme)) #pcf drops below 0 at 2; p = 2
+
+# arma_res <- auto.arima(resid(gam_piru$lme, type = 'normalized'), stationary = TRUE, seasonal = FALSE)
+# arma_res
+
+gam_piru_arma <- gamm(logBAI ~ forest_type + BA_pct_lg +  
+                               fire1947 + elev_std +
+                               est_age_std + pctTC + 
+                               s(year_cent, k = 10) + 
+                               s(northiness, k = 20) +
+                               te(spring_5c_days_roll5, year_cent, k = c(10,10)) +
+                               te(ppt_gs_roll5, year_cent, k = c(10, 10)) +
+                               te(NO3_roll5, year_cent, k = c(10, 10)) +
+                               s(Plot_Name, bs = 're', k = 40) +   
+                               s(year_fac, bs = 're', k = 5),
+                 family = gaussian, 
+                 correlation = corARMA(form = ~1|Year, q = 6, p = 2),
+                # family = tw(), #tweedie dist, will determine p 
+                 data = piru_codom, method = "REML", control = ctrl_gam)
+
+# str(gam_piru_ar0s)
+gam.check(gam_piru_arma$gam)
+summary(gam_piru_arma$gam)
+par(mfrow = c(2,3))
+plot(gam_piru_arma$gam)
+par(mfrow = c(1,1))
+
+acf(resid(gam_piru$lme))
+pacf(resid(gam_piru$lme))
+acf(resid(gam_piru_ar6$lme))
+pacf(resid(gam_piru_ar6$lme))
+
+#plot(gam_piru$gam)
+
+# gratia::appraise(gam_piru) # Error- not sure why
+# gratia::draw(gam_piru) # Error- not sure why
+
+plot(gam_piru$gam, scale = 0)
+
+g <- getViz(gam_piru)
+#plot(sm(g, 6))
+#print(plot(g, allTerms = T))
+check(g)
+
+vis.gam(gam_piru, view = c("year_cent", "ppt_8_roll5"), plot.type = "contour", color = 'topo')
+vis.gam(gam_piru, view = c("ppt_8_roll5", "elev_std"), plot.type = 'contour')
+vis.gam(gam_piru, view = c('ppt_8_roll5', "dbh_std"), plot.type = 'contour')
+
+#plot(g, residuals = TRUE)
+
+b0 <- coef(gam_piru)[1]
+draw(gam_piru, residuals = T)
+
+plot.gam(gam_piru)
+
+```
+
+Next steps
+1. Visualize results better
+2. More diagnostics (check tweedie without log)
+3. Cross validate with cores dropped from plots
+4. Cross validate with plots dropped from analysis
+Next I need to generate rasters of ACAD with the values of the model and use model to predict.
