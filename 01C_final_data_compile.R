@@ -19,7 +19,11 @@ fulld <- fulld |> mutate(forest_type =
                                      Group_1 == "SSF- Aspen & Birch Phase" ~ "SSFA")) 
 names(fulld)
 
-simpd <- fulld |> select(Plot_Name, Year, Unit = ParkSubUnit, coreID, species,
+simpd <- fulld |> 
+                  # mutate(uidc = paste0(Plot_Name, "_", coreID),
+                  #        uidy = paste0(Plot_Name, "_", coreID, "_", Year)) |> 
+                  select(Plot_Name, # uidc, uidy, 
+                         Year, Unit = ParkSubUnit, coreID, species,
                          RRWmm, BAIcm2,
                          X = xCoordinate, Y = yCoordinate,
                          Physio = PhysiographySummary, Aspect, forest_type, elev_m, 
@@ -128,7 +132,7 @@ gsl_ff_data <-
            }
   )
 
-ggplot(gsl_ff_data |> filter(Plot_Name == "ACAD-007"), aes(x = year, y = gs_ff_length)) +
+ggplot(gsl_ff_data |> filter(Plot_Name == "ACAD-014"), aes(x = year, y = gs_ff_length)) +
   geom_point() + geom_smooth() + forestNETN::theme_FHM()
 
 # Calculating number of days where max temp is > 5c in spring and fall to capture shoulder growing seasons
@@ -165,66 +169,53 @@ gs_data <- reduce(gs_dfs, full_join, by = c("Plot_Name", "year"))
 write.csv(gs_data, "./data/ACAD_growing_season_metrics.csv", row.names = F)
 
 # Calculate a rolling average to capture cumulative effects of previous dry or wet years
-roll_fun <- function(dat = simpd2, var, roll){
-  #xcol <- paste0(var, "_roll", roll)
-  dat1 <- dat |> select(Plot_Name, coreID, Year, all_of(var)) |> 
-    arrange(Plot_Name, coreID, Year) |> 
-    group_by(Plot_Name, coreID) |> 
-    mutate(lag_x = dplyr::lag(!!sym(var), n = 1)) |> 
-    mutate("{var}_roll{roll}" := 
-             zoo::rollmean(lag_x, k = roll, 
-                      align = 'right', # calcs previous window 
-                      fill = NA)) |> 
-    ungroup() |> select(-lag_x) |> 
-    data.frame()
-  col = c(paste0(var, "_roll", roll))
-  dat2 <- data.frame(dat1[,ncol(dat1)])
-  names(dat2) <- col
-  return(dat2)
-}
-
-lag_fun <- function(dat, var, lag){
-  dat1 <- dat |> select(Plot_Name, coreID, Year, all_of(var)) |> 
-    arrange(Plot_Name, coreID, Year) |> 
-    group_by(Plot_Name, coreID) |> 
-    mutate("{var}_lag{lag}" := dplyr::lag(!!sym(var), n = lag)) |> 
-    ungroup() |> select(-all_of(var)) |> data.frame()
-  col = c(paste0(var, "_lag", lag))
-  dat2 <- data.frame(dat1[,ncol(dat1)])
-  names(dat2) <- col
-  return(dat2)
-}
-
 vars <- c("SPEI01_4", "SPEI01_5", "SPEI01_6", "SPEI01_7", 
           "SPEI01_8", "SPEI01_9", "SPEI01_10", 
           "SPEI03_4", "SPEI03_5", "SPEI03_6", "SPEI03_7", 
           "SPEI03_8", "SPEI03_9", "SPEI03_10",
           "NO3", "SO4", "pH", "tmin_wint", "tmax_gs", "ppt_gs", 
-          "ppt_8", "ppt_4",
+          "ppt_4", "ppt_5", "ppt_6", "ppt_7", "ppt_8",
           "gs_5c_length", "gs_ff_length", "spring_5c_days", "fall_5c_days")
-rolls <- c(2:5)
 
-roll_df <- data.frame(vars = rep(vars, each = length(rolls)),
-                      rolls = rep(rolls, length(vars)))
+simpd3 <- full_join(simpd2, gs_data, by = c("Plot_Name", "Year" = "year")) |> 
+  filter(!is.na(coreID))
 
-names(simpd2)
+core_rolls <- simpd3 %>% #select(Plot_Name, coreID, Year, ppt_4) |> 
+  group_by(Plot_Name, coreID) %>%  
+  mutate(across(all_of(vars), 
+                ~dplyr::lag(., 1), 
+                .names = "{.col}_lag1")) %>% 
+  mutate(across(ends_with("lag1"), 
+                ~zoo::rollmean(., k = 2, 
+                               align = 'right', # calcs previous window 
+                               fill = NA),
+                .names = '{.col}_roll2')) %>%
+  mutate(across(ends_with("lag1"), 
+                ~zoo::rollmean(., k = 3, 
+                               align = 'right', # calcs previous window 
+                               fill = NA),
+                .names = '{.col}_roll3')) %>%
+  mutate(across(ends_with("lag1"), 
+                ~zoo::rollmean(., k = 4, 
+                               align = 'right', # calcs previous window 
+                               fill = NA),
+                .names = '{.col}_roll4')) %>%
+  mutate(across(ends_with("lag1"), 
+                ~zoo::rollmean(., k = 5, 
+                               align = 'right', # calcs previous window 
+                               fill = NA),
+                .names = '{.col}_roll5')) %>%
 
-simpd3 <- full_join(simpd2, gs_data, by = c("Plot_Name", "Year" = "year"))
-head(simpd3)
+ data.frame()
+names(core_rolls)
+old_names <- names(core_rolls[1:35])
+new_order <- sort(names(core_rolls[,36:ncol(core_rolls)]))
+core_rolls2 <- core_rolls[,c(old_names, new_order)]
 
-core_rolls <- cbind(simpd3, ##|> select(Plot_Name, coreID, Year),
-                    map2(roll_df$vars, roll_df$rolls,
-                       ~roll_fun(simpd3, var = .x, roll = .y)) |> list_cbind())
+names(core_rolls2) <- gsub("_lag1_roll", "_roll", names(core_rolls2))
 
-core_lagrolls <- cbind(core_rolls, 
-                       map(vars, 
-                           ~lag_fun(core_rolls, var = ., lag = 1)) |> 
-                           list_cbind())
-
-table(core_lagrolls$Crown_Class)
-table(core_lagrolls$Year) #1980 to 2022
-hist(core_lagrolls$Year)
-names(core_lagrolls)
-write.csv(core_lagrolls, "./data/ACAD_final_core_data_20240311.csv", row.names = F)
+table(core_rolls2$Crown_Class)
+table(core_rolls2$Year) #1980 to 2022
+write.csv(core_rolls2, "./data/ACAD_final_core_data_20240315.csv", row.names = F)
 
 
