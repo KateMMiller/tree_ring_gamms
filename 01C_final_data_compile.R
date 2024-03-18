@@ -16,7 +16,7 @@ fulld <- fulld |> mutate(forest_type =
                                      Group_1 == "Northern Hardwood - Hemlock Hardwood Forest" ~ "NHWD",
                                      Group_1 == "North-Central Appalachian & Laurentian Rocky Outc*" ~ "OUTC",
                                      Group_1 == "Red Spruce - Fir Forest" ~ "SSF",
-                                     Group_1 == "SSF- Aspen & Birch Phase" ~ "SSFA")) 
+                                     Group_1 == "SSF- Aspen & Birch Phase" ~ "SSF")) 
 names(fulld)
 
 simpd <- fulld |> 
