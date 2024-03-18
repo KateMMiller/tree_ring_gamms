@@ -40,7 +40,7 @@ miss_soil_info <- joinSoilLabData(park = "ACAD", from = 2007, to = 2019) %>%  # 
 soil_info_fix <- rbind(soil_info, miss_soil_info)
 
 #------ Pull in tree density and BA ------
-trees <- joinTreeData(park = "ACAD", from = 2018, to = 2021, status = "live") %>% 
+trees_plot <- joinTreeData(park = "ACAD", from = 2018, to = 2021, status = "live") %>% 
   group_by(Plot_Name) %>% summarize(live_stems_ha = sum(num_stems, na.rm = T)*(10000/225),
                                     liveBA_m2ha = sum(BA_cm2, na.rm = T)/225)
 
@@ -50,8 +50,9 @@ forest_plots_df <- data.frame(forest_plots) %>% mutate(Plot_Name = paste0("ACAD-
   select(Plot_Name, Group_1, elev_m = RASTERVALU, fire47 = X1947_fire)
 
 #---- Combine NETN plot-level data sets ----
-full_plot_data <- purrr::reduce(list(plot_info, forest_plots_df, stand_info, trees, soil_info_fix), 
-                                left_join, by = "Plot_Name") %>% 
+full_plot_data <- purrr::reduce(list(plot_info, forest_plots_df, stand_info, trees_plot, 
+                                     soil_info_fix), 
+                                left_join, by = "Plot_Name") |> unique() |> 
   # Convert aspect to something usable
   mutate(aspect_fac = case_when(Aspect == 0 ~ "NONE", 
                                 between(Aspect, 1, 90) ~ "NE",
@@ -61,12 +62,22 @@ full_plot_data <- purrr::reduce(list(plot_info, forest_plots_df, stand_info, tre
                                 TRUE ~ NA_character_),
          northiness = ifelse(aspect_fac == "NONE", 0, round(cos(Aspect*pi/180), 3)),
          eastness = ifelse(aspect_fac == "NONE", 0, round(sin(Aspect*pi/180), 3)), 
-         fire1947 = ifelse(fire47 == 'burned', 1, 0)) %>% select(-fire47)
+         fire1947 = ifelse(fire47 == 'burned', 1, 0), 
+         forest_type = case_when(Group_1 == "Laurentian - Acadian Acidic Swamp" ~ "FSWP",
+                                     Group_1 == "Northern Hardwood - Hemlock Hardwood Forest" ~ "NHWD",
+                                     Group_1 == "North-Central Appalachian & Laurentian Rocky Outc*" ~ "OUTC",
+                                     Group_1 == "Red Spruce - Fir Forest" ~ "SSF",
+                                     Group_1 == "SSF- Aspen & Birch Phase" ~ "SSF")) |> 
+         select(-fire47) |> select(-Group_1)
 
 full_plot_data$fire1947[is.na(full_plot_data$fire1947)] <- 0
 
-table(complete.cases(full_plot_data)) #176 TRUE
+# Expand so records for each year in analysis
+plot_years <- expand.grid(Plot_Name = unique(full_plot_data$Plot_Name), Year = 1980:2020)
+plot_data_comb <- full_join(plot_years, full_plot_data, by = c("Plot_Name"))
 
+table(complete.cases(full_plot_data)) #176 TRUE
+head(full_plot_data)
 #---- Compile data with 1 row per year in each core ----
 #------ Core meta data ------
 acad_core_meta1 <- read_excel(
@@ -174,5 +185,7 @@ head(bai_rrw_comb)
 table(bai_rrw_comb$Crown_Class)
 write.csv(bai_rrw_comb, "./data/BAI_RRW_data_long.csv", row.names = F)
 
-plot_data_comb <- left_join(full_plot_data, bai_rrw_comb, by = c("Plot_Name"))
-write.csv(plot_data_comb, "ACAD_Plot_RRW_BAI_data.csv", row.names = F)
+plot_data_comb <- left_join(full_plot_data, bai_rrw_comb, by = c("Plot_Name")) |> filter(Year >= 1980)
+# add missing years, for climate variables
+
+write.csv(plot_data_comb, "ACAD_Plot_RRW_BAI_data_1980_2020.csv", row.names = F)
