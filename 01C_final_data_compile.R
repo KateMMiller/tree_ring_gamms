@@ -11,24 +11,16 @@ library(zoo) # for rollmean
 fulld <- read.csv("./data/ACAD_plot_core_climate_full_data.csv") |> filter(Year >= 1980) |> 
   filter(!is.na(coreID))
 
-fulld <- fulld |> mutate(forest_type = 
-                           case_when(Group_1 == "Laurentian - Acadian Acidic Swamp" ~ "FSWP",
-                                     Group_1 == "Northern Hardwood - Hemlock Hardwood Forest" ~ "NHWD",
-                                     Group_1 == "North-Central Appalachian & Laurentian Rocky Outc*" ~ "OUTC",
-                                     Group_1 == "Red Spruce - Fir Forest" ~ "SSF",
-                                     Group_1 == "SSF- Aspen & Birch Phase" ~ "SSF")) 
 names(fulld)
 
-simpd <- fulld |> 
-                  # mutate(uidc = paste0(Plot_Name, "_", coreID),
-                  #        uidy = paste0(Plot_Name, "_", coreID, "_", Year)) |> 
-                  select(Plot_Name, # uidc, uidy, 
+simpd <- fulld |> select(Plot_Name, 
                          Year, Unit = ParkSubUnit, coreID, species,
                          RRWmm, BAIcm2,
                          X = xCoordinate, Y = yCoordinate,
                          Physio = PhysiographySummary, Aspect, forest_type, elev_m, 
                          Pct_Rock, Pct_Bryophyte, PlotSlope, Stand_Structure, Pct_Crown_Closure,
-                         live_stems_ha, liveBA_m2ha, horizon_depth, soilpH, pctTN, pctTC, Ca_Al,
+                         live_stems_ha, 
+                         liveBA_m2ha, horizon_depth, soilpH, pctTN, pctTC, Ca_Al,
                          C_N, BaseSat, AlSat, northiness, eastness, fire1947, 
                          Crown_Class, est_age, DBH = DBH_num, BA_pct_lg,
                          NO3, SO4, pH,
@@ -91,6 +83,10 @@ calc_gsl_5c <- function(dat, yr, plot){
   gs_end <- gs$consdays[which(gs$consdays > 183 & 
                               gs$lengths >= 6 &
                               gs$values == FALSE)[1]-1] + 1
+  if(is.na(gs_end)){# backup if less than 6 consecutive cold days
+      gs_end <- gs$consdays[which(gs$consdays > 183 &
+                                  gs$lengths >= 2 &
+                                  gs$values == FALSE)[1]-1] + 1}
   gsl <- (gs_end - 5) - (gs_start - 5) 
   gsldata <- data.frame(Plot_Name = plot, year = yr, gs_5c_length = gsl)
   return(gsldata)
