@@ -8,13 +8,13 @@ library(zoo) # for rollmean
 
 # Simplifying dataset to only include variables of interest
 # -- Choosing DayMet-only derived climate data
-fulld <- read.csv("./data/ACAD_plot_core_climate_full_data.csv") |> filter(Year >= 1980) |> 
+fulld <- read.csv("./data/ACAD_plot_core_climate_full_data.csv") |> filter(year >= 1980) |> 
   filter(!is.na(coreID))
 
 names(fulld)
 
 simpd <- fulld |> select(Plot_Name, 
-                         Year, Unit = ParkSubUnit, coreID, species,
+                         Year = year, Unit = ParkSubUnit, coreID, species,
                          RRWmm, BAIcm2,
                          X = xCoordinate, Y = yCoordinate,
                          Physio = PhysiographySummary, Aspect, forest_type, elev_m, 
@@ -128,7 +128,7 @@ gsl_ff_data <-
            }
   )
 
-ggplot(gsl_ff_data |> filter(Plot_Name == "ACAD-014"), aes(x = year, y = gs_ff_length)) +
+ggplot(gsl_ff_data |> filter(Plot_Name == "ACAD-003"), aes(x = year, y = gs_ff_length)) +
   geom_point() + geom_smooth() + forestNETN::theme_FHM()
 
 # Calculating number of days where max temp is > 5c in spring and fall to capture shoulder growing seasons
@@ -211,7 +211,7 @@ core_rolls2 <- core_rolls[,c(old_names, new_order)]
 names(core_rolls2) <- gsub("_lag1_roll", "_roll", names(core_rolls2))
 
 table(core_rolls2$Crown_Class)
-table(core_rolls2$Year) #1980 to 2022
+table(core_rolls2$Year) #413 from 1980 to 2022
 write.csv(core_rolls2, "./data/ACAD_final_core_data_20240315.csv", row.names = F)
 
 
