@@ -1,0 +1,296 @@
+---
+output: html_document
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+options(digits = 6, scipen = 100)
+```
+
+<h5> Mixed model of Basal Area Increment growth of Red spruce (<i>Picea rubens</i>)</h5> {.tabset}
+---
+
+### Compile Data {.tabset}
+
+```{r import, echo = F, message = F}
+library(tidyverse)
+library(corrr) # correlation matrix
+library(corrplot) # for inspecting collinearity
+library(nlme)
+library(randomForest)
+#library(MuMIn) # for R2
+#library(merTools)
+
+ctrl_nlme <- nlme::nlmeControl(maxIter = 10000, msMaxIter = 10000, msVerbose = FALSE)
+
+# Used Compiling_covariates.R to compile the main dataset.
+cordat_pre <- read.csv("./data/ACAD_final_core_data_20240315.csv") 
+cordat <- cordat_pre %>% filter(Crown_Class %in% c(3, 4)) |> filter(!is.na(BAIcm2)) |> filter(Year >= 1986)
+table(cordat$Crown_Class)
+
+num_check <- cordat %>% select(Plot_Name, coreID, species, Crown_Class) %>% unique() %>% 
+  group_by(species, Crown_Class) %>% tally()
+
+num_check
+```
+
+<h4> Split dataset for cross-validation</h4>
+```{r}
+set.seed(20240227)
+piru_codom1 <- cordat |> filter(species == 'PIRU') |> filter(Crown_Class == 3)
+
+# can only use 1 core per plot and species for hierarchical modelling, so dropping any cores younger than 1984 (acid dep) then randomly selecting one with sample_n
+piru86 <- piru_codom1 %>% filter(between(Year, 1986, 2020)) %>% select(coreID) %>% unique()
+
+piru_cores <- piru_codom1 |>  filter(coreID %in% piru86$coreID) |> 
+  dplyr::select(Plot_Name, coreID) |> group_by(Plot_Name) |> unique() |> 
+  sample_n(1) |>  
+  ungroup() 
+
+nrow(piru_cores) #73
+
+piru_codom1$bai_cent = piru_codom1$BAIcm2 - mean(piru_codom1$BAIcm2)
+
+e <- piru_codom1 %>% select(BAIcm2) %>% filter(BAIcm2 != 0) %>% 
+  slice(which.min(BAIcm2)) %>% as.numeric()
+e #0.3
+
+#hist(piru_codom_full$BAIcm2)
+#hist(piru_codom_full$bai_cent)
+
+std01 <- function(x){(x-min(x))/(max(x)-min(x))}
+cent <- function(x){x - mean(x)}
+
+piru_codom1<- piru_codom1 %>% 
+  mutate(logBAI = log(BAIcm2 + e), # remove 1 large negative outlier with log
+         year_cent = Year - min(Year),
+         elev_cent = cent(elev_m),
+         elev_std = std01(elev_m),
+         dbh_cent = cent(DBH),
+         dbh_std = std01(DBH),
+         live_stems_cent = cent(live_stems_ha),
+         live_stems_std = std01(live_stems_ha),
+         est_age_cent = cent(est_age),
+         est_age_std = std01(est_age)
+)
+
+# have to convert to factors, otherwise get:
+    # Error in names(dat) <- object$term : 'names' attribute [2] must be the same length as the vector [0]
+piru_codom1$Plot_Name <- as.factor(piru_codom1$Plot_Name)
+piru_codom1$coreID <- as.factor(piru_codom1$coreID)
+piru_codom1$species <- as.factor(piru_codom1$species)
+piru_codom1$year_fac <- as.factor(piru_codom1$Year)
+
+piru_codom <- piru_codom1 %>% filter(coreID %in% piru_cores$coreID) |> 
+  filter(!is.na(BAIcm2)) # drop plots missing BAIcm2 and only include 1 core per plot
+
+length(unique(piru_codom$coreID)) #73
+
+check <- piru_codom %>% dplyr::select(Plot_Name, Crown_Class, coreID) %>% 
+  unique() %>% group_by(Plot_Name, Crown_Class) %>% 
+  summarize(corecnt = n(), .groups = 'drop') %>% filter(corecnt > 1) %>% nrow()# none
+
+check # 0 all plots only have 1 core
+
+# test dataset using cores dropped to make piru_codom; 
+# complete 5-year rolling averages start at 1986 for deposition data
+piru_codom_test <- piru_codom1 |> filter(!coreID %in% piru_cores$coreID) |> droplevels()
+
+length(unique(piru_codom$coreID)) #73
+length(unique(piru_codom_test$coreID)) #40
+
+table(piru_codom$coreID)
+table(piru_codom_test$coreID)
+
+write.csv(piru_codom, "./data/piru_codom_train.csv")
+
+```
+
+### Checking the Data {.tabset}
+
+#### Correlations {.tabset}
+```{r}
+cormat_bai <- piru_codom |> select_if(is.numeric) |> correlate() |> 
+   focus(BAIcm2) |> filter(abs(BAIcm2) >= 0.15) 
+
+cormat_bai
+# cor_mat_dep <- round(cor(piru_codom[,
+#                             c("BAIcm2", 
+#                               "pH_lag1", "pH_roll2", "pH_roll3", "pH_roll4", "pH_roll5",   
+#                               "SO4", "SO4_lag1", "SO4_roll2", "SO4_roll3", "SO4_roll4", "SO4_roll5",
+#                               "NO3", "NO3_lag1", "NO3_roll2", "NO3_roll3", "NO3_roll4", "NO3_roll5")], 
+#                          use = 'pairwise.complete.obs'), 2)
+# 
+# corrplot(cor_mat_dep, method = 'circle')
+# 
+# cor_mat_cc <- round(cor(piru_codom[,c("BAIcm2",
+#                               "gs_5c_length", "gs_5c_length_lag1", "gs_5c_length_roll2", "gs_5c_length_roll3",
+#                                 "gs_5c_length_roll4", "gs_5c_length_roll5",
+#                               "spring_5c_days", "spring_5c_days_lag1", "spring_5c_days_roll2", "spring_5c_days_roll3", 
+#                               "spring_5c_days_roll4", "spring_5c_days_roll5",
+#                               "tmin_wint", "tmin_wint_lag1", "tmin_wint_roll2", "tmin_wint_roll3", 
+#                               "tmin_wint_roll4", "tmin_wint_roll5",
+#                               "ppt_gs", "ppt_gs_lag1", "ppt_gs_roll2", "ppt_gs_roll3", "ppt_gs_roll4", "ppt_gs_roll5",
+#                               "ppt_8", "ppt_8_lag1", "ppt_8_roll2", "ppt_8_roll3", "ppt_8_roll4", "ppt_8_roll5")],
+#                            use = 'pairwise.complete.obs'), 2)
+# 
+# corrplot(cor_mat_cc, method = 'circle')
+# 
+# 
+# names(piru_codom)
+cor_mat <-
+round(cor(piru_codom[,c("BAIcm2", "BA_pct_lg", "est_age", "live_stems_ha", "DBH", 'northiness',
+                        'elev_m', 'pctTC', 'C_N', 'horizon_depth', 'Ca_Al', 'soilpH',
+                        'NO3_roll5', 'pH_roll5', "SO4_roll5", 'spring_5c_days_roll5',
+                        'SPEI01_5_roll4', 'SPEI03_10_roll5', 'SPEI03_8_roll5',
+                        'ppt_gs_roll5', 'ppt_8_roll5')],
+          use = 'pairwise.complete.obs'),2)
+
+corrplot(cor_mat, method = 'circle')
+```
+
+#### EDA {.tabset}
+```{r}
+
+ggplot(piru_codom, aes(y = gs_5c_length_roll5, x = year_fac, fill = year_fac)) + geom_violin() + 
+  forestNETN::theme_FHM() + theme(legend.position = 'none')
+ggplot(piru_codom, aes(y = ppt_8_roll5, x = year_fac, fill = year_fac)) + geom_violin() + 
+  forestNETN::theme_FHM() + theme(legend.position = 'none')
+ggplot(piru_codom, aes(y = SO4_roll5, x = year_fac, fill = year_fac)) + geom_violin() + 
+  forestNETN::theme_FHM() + theme(legend.position = 'none')
+ggplot(piru_codom, aes(y = NO3_roll5, x = year_fac, fill = year_fac)) + geom_violin() + 
+  forestNETN::theme_FHM() + theme(legend.position = 'none')
+
+# Looking at shape of responses
+ggplot(piru_codom, aes(x = Year, y = BAIcm2, color = forest_type, fill = forest_type)) + 
+  geom_point(alpha = 0.2) + geom_smooth() + scale_colour_brewer(palette = "Set1") +
+  theme(legend.position = 'right', axis.text.x = element_text(angle = 90)) + forestNETN::theme_FHM()
+
+ggplot(piru_codom, aes(x = SO4_roll5, y = BAIcm2, color = Plot_Name, fill = Plot_Name)) + 
+  geom_point(alpha = 0.2) + geom_smooth(se = F) + 
+  theme(legend.position = 'right') + 
+  forestNETN::theme_FHM() + theme(legend.position = 'none')
+
+ggplot(piru_codom, aes(x = ppt_8_roll5, y = BAIcm2, color = Plot_Name, fill = Plot_Name)) + 
+  geom_point(alpha = 0.2) + geom_smooth(se=F) +
+  theme(legend.position = 'right') + 
+  forestNETN::theme_FHM() + theme(legend.position = 'none')
+
+ggplot(piru_codom, aes(x = gs_5c_length_roll5, y = BAIcm2, color = Plot_Name, fill = Plot_Name)) + 
+  geom_point(alpha = 0.2) + geom_smooth(se=F) +
+  theme(legend.position = 'right') + forestNETN::theme_FHM() + theme(legend.position = 'none')
+
+```
+
+### BAI LME Model Diagnostics
+```{r }
+# ti b/c only including interaction terms and including year_cent as main effect separately
+lme_piru <- lme(logBAI ~ 
+                    forest_type + #northiness + 
+                    eastness + fire1947 +
+                    dbh_std + # correlated with BA_pct_lg
+                    horizon_depth + 
+                    elev_std + 
+                    soilpH + #Ca_Al +
+                    gs_5c_length_roll5 +
+                    poly(ppt_8_roll5, 3) + 
+                    SO4_roll5,
+                #correlation = corAR1(form = ~1|year_std),
+                random = ~1|Plot_Name, method = 'REML',
+                data = piru_codom)
+
+plot(lmemodplot(lme_piru, resid(., scaled = TRUE) ~ fitted(.), abline = 0,
+     pch = 20, xlab = "Fitted values", ylab = "Standardised residuals"))
+
+qqnorm(resid(lme_piru), main = "QQ plot of residuals")
+
+re <- ranef(lme_piru)[,1]
+qqnorm(re, main = "QQ plot of random effects")
+
+mod_df <- data.frame(lme_piru$data |> select(forest_type, dbh_std, horizon_depth, elev_std,
+                                             soilpH, gs_5c_length_roll5, ppt_8_roll5, 
+                                             SO4_roll5), resid = lme_piru$residuals)
+
+ggplot(mod_df, aes(x = dbh_std, y = resid.fixed)) + geom_point() + forestNETN::theme_FHM()
+ggplot(mod_df, aes(x = horizon_depth, y = resid.fixed)) + geom_point() + forestNETN::theme_FHM()
+ggplot(mod_df, aes(x = elev_std, y = resid.fixed)) + geom_point() + forestNETN::theme_FHM()
+ggplot(mod_df, aes(x = soilpH, y = resid.fixed)) + geom_point() + forestNETN::theme_FHM()
+ggplot(mod_df, aes(x = gs_5c_length_roll5, y = resid.fixed)) + geom_point() + forestNETN::theme_FHM()
+ggplot(mod_df, aes(x = ppt_8_roll5, y = resid.fixed)) + geom_point() + forestNETN::theme_FHM()
+ggplot(mod_df, aes(x = SO4_roll5, y = resid.fixed)) + geom_point() + forestNETN::theme_FHM()
+
+acf(resid(lme_piru, type = 'normalized'))
+
+summary(lme_piru)
+
+```
+
+### Cross validation
+```{r}
+pred_piru <- cbind(piru_codom_test |> select(Plot_Name, Year, coreID, logBAI), 
+                   pred_logBAI = predict(lme_piru, newdata = piru_codom_test, type = 'terms'))
+
+ggplot(pred_piru, aes(x = logBAI, y = pred_logBAI)) + 
+  geom_point() + geom_abline(slope = 1, intercept = 0) + forestNETN::theme_FHM()
+
+cor(pred_piru[,c("logBAI", "pred_logBAI")]) # 0.544
+mod <- lm(pred_logBAI ~ logBAI, data = pred_piru)
+
+summary(mod)$adj.r.squared
+
+```
+
+<h4> Next steps </h4>
+1. Generate rasters of covariates in model ACAD to predict various climate scenarios.
+
+### Random Forest
+```{r}
+piru_cores <- data.frame(coreID = sort(unique(piru_codom1$coreID)))
+samp <- sample.int(n = nrow(piru_cores), size = floor(0.90*nrow(piru_cores)), replace = F)
+piru_core_train <- piru_cores[samp,]
+
+piru_codom_full <- piru_codom1 |> 
+  mutate(Training = ifelse(coreID %in% piru_core_train, "Train", "Test")) 
+
+piru_codom_train <- piru_codom_full |> filter(Training == "Train")
+piru_codom_test <- piru_codom_full |> filter(Training == "Test")
+table(piru_codom_full$Training)
+#415/(3246+415) #~10%
+```
+
+```{r}
+set.seed(20240227)
+names(piru_codom_train)
+BAI_data <- piru_codom_train |> 
+  select(BAIcm2, Physio:live_stems_ha, horizon_depth:Crown_Class, DBH, 
+         fall_5c_days:tmin_wint_roll5) 
+BAI_test <- piru_codom_test |> 
+  select(BAIcm2, Physio:live_stems_ha, horizon_depth:Crown_Class, DBH, 
+         fall_5c_days:tmin_wint_roll5)
+names(BAI_test)
+rf <- randomForest(BAIcm2 ~ ., data = BAI_data, importance = T, 
+                   na.action = na.omit, mtry = 15)
+print(rf)
+importance(rf)
+plot(rf)
+
+baipred <- cbind(BAI_test, BAI_pred = predict(rf, newdata = BAI_test))
+
+modrf <- lm(BAI_pred ~ BAIcm2, data = baipred)
+#plot(modrf)
+
+ggplot(baipred, aes(x = BAIcm2, y = BAI_pred)) + geom_point() + geom_smooth() + forestNETN::theme_FHM()
+summary(modrf)
+
+varImpPlot(rf, sort = T)
+```
+Interpretting importance plot:
+https://stats.stackexchange.com/questions/401437/the-importance-in-randomforest-returns-different-results-how-to-interpret-thi
+
+With %IncMSE, the chart tells you that MSE (mean squared error) would increase by about 18% if DBH were excluded from the model. 
+
+IncNodeImpurity scale is arbitrary, but gives the difference between RSS before and after the split on that variable. DBH and est_age are clearly important. 
+
+- Prune data going into the random forest, so can tell a cleaner story about predictors. 
+- Consider just including current spring, previous summer/fall (lag1) and roll5s for climate and dep data. 
+- Consider adding stand height. 
