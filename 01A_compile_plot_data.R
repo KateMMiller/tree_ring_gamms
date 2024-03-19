@@ -74,10 +74,11 @@ full_plot_data$fire1947[is.na(full_plot_data$fire1947)] <- 0
 
 # Expand so records for each year in analysis
 plot_years <- expand.grid(Plot_Name = unique(full_plot_data$Plot_Name), Year = 1980:2020)
-plot_data_comb <- full_join(plot_years, full_plot_data, by = c("Plot_Name"))
+plot_data_comb <- left_join(plot_years, full_plot_data, by = c("Plot_Name"))
 
 table(complete.cases(full_plot_data)) #176 TRUE
-head(full_plot_data)
+table(complete.cases(plot_data_comb)) #176 TRUE
+
 #---- Compile data with 1 row per year in each core ----
 #------ Core meta data ------
 acad_core_meta1 <- read_excel(
@@ -184,8 +185,22 @@ bai_rrw_comb$Crown_Class[bai_rrw_comb$Crown_Class == "Open Grown"] <- "1"
 head(bai_rrw_comb)
 table(bai_rrw_comb$Crown_Class)
 write.csv(bai_rrw_comb, "./data/BAI_RRW_data_long.csv", row.names = F)
+names(plot_data_comb)
 
-plot_data_comb <- left_join(full_plot_data, bai_rrw_comb, by = c("Plot_Name")) |> filter(Year >= 1980)
-# add missing years, for climate variables
+plot_data_comb2 <- left_join(plot_data_comb, bai_rrw_comb, by = c("Plot_Name", "Year"), 
+                             relationship = 'many-to-many') |> 
+  select(Plot_Name, Year, coreID, everything()) |> 
+  filter(Year >= 1980)
 
-write.csv(plot_data_comb, "ACAD_Plot_RRW_BAI_data_1980_2020.csv", row.names = F)
+plot_yr_core <- expand.grid(coreID = unique(plot_data_comb2$coreID),
+                            Year = 1980:2022) |> drop_na()
+table(plot_yr_core$coreID)
+table(plot_yr_core$Year)
+
+# Adding missing years for complete climate data.
+plot_data_comb3 <- left_join(plot_yr_core, plot_data_comb2, by = c("coreID", "Year")) |> 
+  group_by(coreID) |> 
+  fill(c(Plot_Name:forest_type, species:BA_pct_lg), .direction = 'up') |> 
+  fill(c(Plot_Name:forest_type, species:BA_pct_lg), .direction = 'down')
+
+write.csv(plot_data_comb3, "./data/ACAD_Plot_RRW_BAI_data_1980_2020.csv", row.names = F)

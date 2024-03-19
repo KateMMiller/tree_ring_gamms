@@ -363,11 +363,12 @@ names(spei_all_comb) #PlotName, year lat/long
 names(ws_wide) #year
 names(dep) #year
 
+
 clim_comb1 <- full_join(daymet_final, prism_comb, by = c("Plot_Name", "year"))
 clim_comb2 <- full_join(clim_comb1, spei_all_comb, by = c("Plot_Name", "year", "lat", "long"))
 clim_comb3 <- full_join(clim_comb2, ws_wide, by = "year")
 clim_comb4 <- full_join(clim_comb3, dep, by = "year")
 write.csv(clim_comb4, "./data/ACAD_climate_data.csv", row.names = F)
 
-core_clim <- full_join(plot_data_comb, clim_comb4, by = c("Plot_Name", "Year" = "year"))
+core_clim <- left_join(clim_comb4, plot_data_comb3, by = c("Plot_Name", "year" = "Year"))
 write.csv(core_clim, "./data/ACAD_plot_core_climate_full_data.csv", row.names = F)
