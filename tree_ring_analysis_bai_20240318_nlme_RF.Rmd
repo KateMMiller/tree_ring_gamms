@@ -269,8 +269,8 @@ BAI_test <- piru_codom_test |>
          fall_5c_days:tmin_wint_roll5)
 names(BAI_test)
 rf <- randomForest(BAIcm2 ~ ., data = BAI_data, importance = T, 
-                   na.action = na.omit, mtry = 15)
-print(rf)
+                   na.action = na.omit)#, mtry = 15)
+print(rf) #78% var
 importance(rf)
 plot(rf)
 
@@ -280,7 +280,7 @@ modrf <- lm(BAI_pred ~ BAIcm2, data = baipred)
 #plot(modrf)
 
 ggplot(baipred, aes(x = BAIcm2, y = BAI_pred)) + geom_point() + geom_smooth() + forestNETN::theme_FHM()
-summary(modrf)
+summary(modrf) #0.927
 
 varImpPlot(rf, sort = T)
 ```
