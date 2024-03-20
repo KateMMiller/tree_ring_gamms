@@ -1,0 +1,101 @@
+### Random forest Raw Ring Widths
+
+```{r}
+library(tidyverse)
+library(randomForest)
+```
+
+```{r}
+cordat_pre <- read.csv("./data/ACAD_final_core_data_20240315.csv") 
+cordat <- cordat_pre |> filter(Crown_Class %in% c(3, 4)) |> filter(!is.na(RRWmm)) |> filter(Year >= 1986)
+table(cordat$Crown_Class)
+
+piru <- cordat |> filter(species == 'PIRU') |> filter(Crown_Class %in% c(3, 4))
+
+piru_cores <- data.frame(coreID = sort(unique(piru$coreID)))
+samp <- sample.int(n = nrow(piru_cores), size = floor(0.90*nrow(piru_cores)), replace = F)
+piru_core_train <- piru_cores[samp,]
+
+piru_full <- piru |> 
+  mutate(Training = ifelse(coreID %in% piru_core_train, "Train", "Test")) 
+
+piru_train <- piru_full |> filter(Training == "Train")
+piru_test <- piru_full |> filter(Training == "Test")
+table(piru_full$Training)
+
+set.seed(320)
+#names(piru_codom_train)
+rrw_data <- piru_train |> 
+  select(RRWmm, Physio:live_stems_ha, horizon_depth:Crown_Class, DBH, #est_age,
+         fall_5c_days, fall_5c_days_lag1, fall_5c_days_roll5,
+         spring_5c_days, spring_5c_days_lag1, spring_5c_days_roll5,
+         gs_5c_length, gs_5c_length_lag1, gs_5c_length_roll5,
+         gs_ff_length, gs_ff_length_lag1, gs_5c_length_roll5,
+         # DayMet
+         # ppt_4, ppt_4_lag1, ppt_4_roll5,
+         # ppt_5, ppt_5_lag1, ppt_5_roll5,
+         # ppt_6, ppt_6_lag1, ppt_6_roll5,
+         # ppt_7, ppt_7_lag1, ppt_7_roll5,
+         # ppt_8, ppt_8_lag1, ppt_8_roll5,
+         # ppt_gs, ppt_gs_lag1, ppt_gs_roll5,
+         # PRISM
+         ppt_4_pr, ppt_4_pr_lag1, ppt_4_pr_roll5,
+         ppt_5_pr, ppt_5_pr_lag1, ppt_5_pr_roll5,
+         ppt_6_pr, ppt_6_pr_lag1, ppt_6_pr_roll5,
+         ppt_7_pr, ppt_7_pr_lag1, ppt_7_pr_roll5,
+         ppt_8_pr, ppt_8_pr_lag1, ppt_8_pr_roll5,
+         ppt_gs_pr, ppt_gs_pr_lag1, ppt_gs_pr_roll5,
+         
+         SPEI01_4, SPEI01_4_lag1, SPEI01_4_roll5,
+         SPEI01_5, SPEI01_5_lag1, SPEI01_5_roll5,
+         SPEI01_6, SPEI01_6_lag1, SPEI01_6_roll5,
+         SPEI01_7, SPEI01_7_lag1, SPEI01_7_roll5,
+         SPEI01_8, SPEI01_8_lag1, SPEI01_8_roll5,
+         SPEI01_9, SPEI01_9_lag1, SPEI01_9_roll5,
+         SPEI01_10_lag1, SPEI01_10_roll5, #SPEI01_10 would be after that year's growth 
+         SPEI03_4, SPEI03_4_lag1, SPEI03_4_roll5,
+         SPEI03_5, SPEI03_5_lag1, SPEI03_5_roll5,
+         SPEI03_6, SPEI03_6_lag1, SPEI03_6_roll5,
+         SPEI03_7, SPEI03_7_lag1, SPEI03_7_roll5,
+         SPEI03_8, SPEI03_8_lag1, SPEI03_8_roll5,
+         SPEI03_9, SPEI03_9_lag1, SPEI03_9_roll5,
+         SPEI03_10, SPEI03_10_lag1, SPEI03_10_roll5,
+         tmax_gs, tmax_gs_lag1, tmax_gs_roll5,
+         tmin_wint, tmin_wint_lag1, tmin_wint_roll5,
+         tmax_gs_pr, tmax_gs_pr_lag1, tmax_gs_pr_roll5,
+         tmin_wint_pr, tmin_wint_pr_lag1, tmin_wint_pr_roll5,
+         NO3, NO3_lag1, NO3_roll5, SO4, SO4_lag1, SO4_roll5,
+         pH, pH_lag1, pH_roll5) 
+
+rrw_test <- piru_test[,names(rrw_data)]
+#names(BAI_test)
+
+# bestmtry <- tuneRF(rrw_data[,2:ncol(rrw_data)], rrw_data$RRWmm,
+#                    mtryStart = 20, ntreeTry = 500,
+#                    stepFactor = 1.5, plot = T,
+#                    trace = T, doBest = T)
+
+bestmtry = 67
+nodes = 5
+
+str(rrw_data)
+rf <- randomForest(RRWmm ~ ., data = rrw_data, importance = T, 
+                    na.action = na.omit, mtry = bestmtry, nodesize = 5)
+print(rf) #82.8
+imp <- data.frame(importance(rf))
+imp |> arrange(-X.IncMSE) |> top_n(20)
+plot(rf)
+
+rrwpred <- cbind(rrw_test, rrw_pred = predict(rf, newdata = rrw_test))
+
+modrf <- lm(rrw_pred ~ RRWmm, data = rrwpred)
+#plot(modrf)
+
+ggplot(rrwpred, aes(x = RRWmm, y = rrw_pred)) + geom_point() + geom_smooth() + forestNETN::theme_FHM()
+summary(modrf) #0.424
+
+cor(rrwpred$rrw_pred, rrwpred$RRWmm) #0.65
+
+varImpPlot(rf, sort = T)
+
+```
