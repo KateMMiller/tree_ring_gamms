@@ -18,10 +18,12 @@ library(corrr) # correlation matrix
 library(corrplot) # for inspecting collinearity
 library(nlme)
 library(randomForest)
+library(neuralnet)
+library(keras)
 #library(MuMIn) # for R2
 #library(merTools)
 
-ctrl_nlme <- nlme::nlmeControl(maxIter = 10000, msMaxIter = 10000, msVerbose = FALSE)
+#ctrl_nlme <- nlme::nlmeControl(maxIter = 10000, msMaxIter = 10000, msVerbose = FALSE)
 
 # Used Compiling_covariates.R to compile the main dataset.
 cordat_pre <- read.csv("./data/ACAD_final_core_data_20240315.csv") 
@@ -53,7 +55,7 @@ piru_codom1$bai_cent = piru_codom1$BAIcm2 - mean(piru_codom1$BAIcm2)
 
 e <- piru_codom1 %>% select(BAIcm2) %>% filter(BAIcm2 != 0) %>% 
   slice(which.min(BAIcm2)) %>% as.numeric()
-e #0.3
+e #0.4
 
 #hist(piru_codom_full$BAIcm2)
 #hist(piru_codom_full$bai_cent)
@@ -102,8 +104,7 @@ length(unique(piru_codom_test$coreID)) #40
 table(piru_codom$coreID)
 table(piru_codom_test$coreID)
 
-write.csv(piru_codom, "./data/piru_codom_train.csv")
-
+#write.csv(piru_codom, "./data/piru_codom_train.csv")
 ```
 
 ### Checking the Data {.tabset}
@@ -199,8 +200,8 @@ lme_piru <- lme(logBAI ~
                 random = ~1|Plot_Name, method = 'REML',
                 data = piru_codom)
 
-plot(lmemodplot(lme_piru, resid(., scaled = TRUE) ~ fitted(.), abline = 0,
-     pch = 20, xlab = "Fitted values", ylab = "Standardised residuals"))
+plot(lme_piru, resid(., scaled = TRUE) ~ fitted(.), abline = 0,
+     pch = 20, xlab = "Fitted values", ylab = "Standardised residuals")
 
 qqnorm(resid(lme_piru), main = "QQ plot of residuals")
 
@@ -234,44 +235,88 @@ ggplot(pred_piru, aes(x = logBAI, y = pred_logBAI)) +
   geom_point() + geom_abline(slope = 1, intercept = 0) + forestNETN::theme_FHM()
 
 cor(pred_piru[,c("logBAI", "pred_logBAI")]) # 0.544
-mod <- lm(pred_logBAI ~ logBAI, data = pred_piru)
+mod_cv <- lm(pred_logBAI ~ logBAI, data = pred_piru)
 
-summary(mod)$adj.r.squared
-
+summary(mod_cv)$adj.r.squared #0.3
 ```
 
-<h4> Next steps </h4>
-1. Generate rasters of covariates in model ACAD to predict various climate scenarios.
-
-### Random Forest
+### Random Forest on Codominant and Intermediate PICRUB
 ```{r}
-piru_cores <- data.frame(coreID = sort(unique(piru_codom1$coreID)))
+piru <- cordat |> filter(species == 'PIRU') |> filter(Crown_Class %in% c(3, 4))
+
+piru_cores <- data.frame(coreID = sort(unique(piru$coreID)))
 samp <- sample.int(n = nrow(piru_cores), size = floor(0.90*nrow(piru_cores)), replace = F)
 piru_core_train <- piru_cores[samp,]
 
-piru_codom_full <- piru_codom1 |> 
+piru_full <- piru |> 
   mutate(Training = ifelse(coreID %in% piru_core_train, "Train", "Test")) 
 
-piru_codom_train <- piru_codom_full |> filter(Training == "Train")
-piru_codom_test <- piru_codom_full |> filter(Training == "Test")
-table(piru_codom_full$Training)
-#415/(3246+415) #~10%
+piru_train <- piru_full |> filter(Training == "Train")
+piru_test <- piru_full |> filter(Training == "Test")
+table(piru_full$Training)
+#728/(6512+728) #~10%
 ```
 
 ```{r}
-set.seed(20240227)
-names(piru_codom_train)
-BAI_data <- piru_codom_train |> 
-  select(BAIcm2, Physio:live_stems_ha, horizon_depth:Crown_Class, DBH, 
-         fall_5c_days:tmin_wint_roll5) 
-BAI_test <- piru_codom_test |> 
-  select(BAIcm2, Physio:live_stems_ha, horizon_depth:Crown_Class, DBH, 
-         fall_5c_days:tmin_wint_roll5)
-names(BAI_test)
+#set.seed(20240227)
+#names(piru_codom_train)
+BAI_data <- piru_train |> 
+  select(BAIcm2, Physio:live_stems_ha, horizon_depth:Crown_Class, DBH, #est_age,
+         fall_5c_days, fall_5c_days_lag1, fall_5c_days_roll5,
+         spring_5c_days, spring_5c_days_lag1, spring_5c_days_roll5,
+         gs_5c_length, gs_5c_length_lag1, gs_5c_length_roll5,
+         gs_ff_length, gs_ff_length_lag1, gs_5c_length_roll5,
+         # DayMet
+         # ppt_4, ppt_4_lag1, ppt_4_roll5,
+         # ppt_5, ppt_5_lag1, ppt_5_roll5,
+         # ppt_6, ppt_6_lag1, ppt_6_roll5,
+         # ppt_7, ppt_7_lag1, ppt_7_roll5,
+         # ppt_8, ppt_8_lag1, ppt_8_roll5,
+         # ppt_gs, ppt_gs_lag1, ppt_gs_roll5,
+         # PRISM
+         ppt_4_pr, ppt_4_pr_lag1, ppt_4_pr_roll5,
+         ppt_5_pr, ppt_5_pr_lag1, ppt_5_pr_roll5,
+         ppt_6_pr, ppt_6_pr_lag1, ppt_6_pr_roll5,
+         ppt_7_pr, ppt_7_pr_lag1, ppt_7_pr_roll5,
+         ppt_8_pr, ppt_8_pr_lag1, ppt_8_pr_roll5,
+         ppt_gs_pr, ppt_gs_pr_lag1, ppt_gs_pr_roll5,
+         
+         SPEI01_4, SPEI01_4_lag1, SPEI01_4_roll5,
+         SPEI01_5, SPEI01_5_lag1, SPEI01_5_roll5,
+         SPEI01_6, SPEI01_6_lag1, SPEI01_6_roll5,
+         SPEI01_7, SPEI01_7_lag1, SPEI01_7_roll5,
+         SPEI01_8, SPEI01_8_lag1, SPEI01_8_roll5,
+         SPEI01_9, SPEI01_9_lag1, SPEI01_9_roll5,
+         SPEI01_10_lag1, SPEI01_10_roll5, #SPEI01_10 would be after that year's growth 
+         SPEI03_4, SPEI03_4_lag1, SPEI03_4_roll5,
+         SPEI03_5, SPEI03_5_lag1, SPEI03_5_roll5,
+         SPEI03_6, SPEI03_6_lag1, SPEI03_6_roll5,
+         SPEI03_7, SPEI03_7_lag1, SPEI03_7_roll5,
+         SPEI03_8, SPEI03_8_lag1, SPEI03_8_roll5,
+         SPEI03_9, SPEI03_9_lag1, SPEI03_9_roll5,
+         SPEI03_10, SPEI03_10_lag1, SPEI03_10_roll5,
+         tmax_gs, tmax_gs_lag1, tmax_gs_roll5,
+         tmin_wint, tmin_wint_lag1, tmin_wint_roll5,
+         tmax_gs_pr, tmax_gs_pr_lag1, tmax_gs_pr_roll5,
+         tmin_wint_pr, tmin_wint_pr_lag1, tmin_wint_pr_roll5,
+         NO3, NO3_lag1, NO3_roll5, SO4, SO4_lag1, SO4_roll5,
+         pH, pH_lag1, pH_roll5) 
+
+BAI_test <- piru_test[,names(BAI_data)]
+#names(BAI_test)
+
+# bestmtry <- tuneRF(BAI_data[,2:ncol(BAI_data)], BAI_data$BAIcm2, 
+#                    mtryStart = 20, ntreeTry = 500,
+#                    stepFactor = 1.5, plot = T,
+#                    trace = T, doBest = T)
+bestmtry = 67
+nodes = 10
+
 rf <- randomForest(BAIcm2 ~ ., data = BAI_data, importance = T, 
-                   na.action = na.omit)#, mtry = 15)
-print(rf) #78% var
-importance(rf)
+                    na.action = na.omit, mtry = bestmtry, nodesize = nodes)
+print(rf)
+imp <- data.frame(importance(rf))
+imp |> arrange(-X.IncMSE) |> top_n(20)
 plot(rf)
 
 baipred <- cbind(BAI_test, BAI_pred = predict(rf, newdata = BAI_test))
@@ -280,9 +325,13 @@ modrf <- lm(BAI_pred ~ BAIcm2, data = baipred)
 #plot(modrf)
 
 ggplot(baipred, aes(x = BAIcm2, y = BAI_pred)) + geom_point() + geom_smooth() + forestNETN::theme_FHM()
-summary(modrf) #0.927
+summary(modrf) #0.424
 
+cor(baipred$BAI_pred, baipred$BAIcm2) #0.65
+```
+```{r height = 6}
 varImpPlot(rf, sort = T)
+
 ```
 Interpretting importance plot:
 https://stats.stackexchange.com/questions/401437/the-importance-in-randomforest-returns-different-results-how-to-interpret-thi
@@ -294,3 +343,14 @@ IncNodeImpurity scale is arbitrary, but gives the difference between RSS before 
 - Prune data going into the random forest, so can tell a cleaner story about predictors. 
 - Consider just including current spring, previous summer/fall (lag1) and roll5s for climate and dep data. 
 - Consider adding stand height. 
+
+Random forest is better than bagged regression trees when you have correlated predictors, which we have in the dataset.
+https://www.hackerearth.com/practice/machine-learning/machine-learning-algorithms/tutorial-random-forest-parameter-tuning-r/tutorial/
+
+Best random forest package: 
+https://www.linkedin.com/pulse/different-random-forest-packages-r-madhur-modi
+
+<h4> Next steps </h4>
+1. Generate rasters of covariates in model ACAD to predict various climate scenarios.
+
+
