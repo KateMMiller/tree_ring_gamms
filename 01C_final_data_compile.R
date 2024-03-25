@@ -170,6 +170,55 @@ ggplot(seas_5c_data |> filter(Plot_Name == "ACAD-001"), aes(x = year, y = spring
 ggplot(seas_5c_data |> filter(Plot_Name == "ACAD-001"), aes(x = year, y = fall_5c_days)) +
   geom_point() + geom_smooth() + forestNETN::theme_FHM()
 
+# Calculating number of days where min temp is -30C or below
+  # -30c comes from Schaberg et al. 2011
+tmin30c <- daymet_comb |> group_by(Plot_Name, year) |> 
+           summarize(num_neg30c_days = sum(tminc <= -30), 
+                                       .groups = 'drop')
+table(tmin30c$num_neg30c_days) # only 0 or 1, not enough range to model. Won't include in dataset
+  
+# Calculate number of frost/thaw events  
+calc_spring_ft_events <- function(dat, yr, plot){ 
+  dat <- dat |> filter(yday < 183) 
+  
+  ft <- data.frame(rle(dat$tminc > 0)[1], rle(dat$tminc > 0)[2]) 
+  ft$consdays <- cumsum(ft$lengths)
+
+# Summarize number of spring thaw (defined as > 5 days with tmin > 0), freeze cycles
+# By finding values = TRUE (>0C) for 5 days, that are followed by a freeze. 
+# Subtract 1 to drop the final growing season return to > 0 temps
+  ft_events <- sum(ft$values[which(ft$values == TRUE & 
+                                 ft$lengths >= 5)])-1
+
+  ftdata <- data.frame(Plot_Name = plot, year = yr, spring_ft_events = ft_events)  
+  return(ftdata)
+
+}
+
+spring_ft_data <- 
+  map2_dfr(plot_years$year, plot_years$Plot_Name, 
+           function(yr, plt){
+             data1 <- daymet_comb |> filter(year == yr) |> filter(Plot_Name == plt)
+             ft <- calc_spring_ft_events(dat = data1, yr = yr, plot = plt)
+           }
+  )
+
+
+ggplot(spring_ft_data |> filter(Plot_Name == "ACAD-001"), aes(x = year, y = spring_ft_events)) +
+  geom_point() + geom_smooth() + forestNETN::theme_FHM()
+
+daily_ft <- 
+  daymet_comb |> filter(yday < 183) |> #July 1  
+  group_by(Plot_Name, year) |> 
+  mutate(daily_thaw = ifelse(tminc < 0 & tmaxc > 0, 1, 0)) |> 
+  summarize(daily_thaws = sum(daily_thaw), .groups = 'drop')
+
+ggplot(daily_ft |> filter(Plot_Name == "ACAD-001"), aes(x = year, y = daily_thaws)) +
+  geom_point() + geom_smooth() + forestNETN::theme_FHM()
+
+# Not enough range in daily ft events or seasonal ft events to model. Not going to include in 
+# final dataset.
+
 gs_dfs <- list(gsl_5c_data, gsl_ff_data, seas_5c_data)
 gs_data <- reduce(gs_dfs, full_join, by = c("Plot_Name", "year"))
 write.csv(gs_data, "./data/ACAD_growing_season_metrics.csv", row.names = F)
