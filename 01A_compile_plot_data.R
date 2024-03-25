@@ -18,24 +18,47 @@ plot_info <- joinLocEvent(park = "ACAD", from = 2018, to = 2021) %>%
 stand_info <- joinStandData(park = "ACAD", from = 2018, to = 2021) %>% 
   select(Plot_Name, Pct_Rock, Txt_Rock, Pct_Bryophyte, Txt_Bryophyte,
          PlotSlope, Stand_Structure, Stand_Structure_Code,
-         Pct_Crown_Closure)
+         Pct_Crown_Closure, Avg_Height_Codom, Avg_Height_Inter)
 
 #------ Soil data from cycle 2, the most complete sample of data. Have to pull from cycle 1 for 029. ------
-soil_info <- joinSoilLabData(park = "ACAD", from = 2010, to = 2013) %>%  # cycle 2: best coverage of all plots
+soil_info_O <- joinSoilLabData(park = "ACAD") %>%  # cycle 2: best coverage of all plots
   filter(Horizon_QC == "O") %>% 
-  select(Plot_Name, soilYear = SampleYear, horizon_depth, soilpH, pctTN, pctTC, 
+  select(Plot_Name, soilYear = SampleYear, hor_O = horizon_depth, soilpH, pctTN, pctTC, 
          Ca_Al, C_N, BaseSat, AlSat)
+
+soil_info_A <- joinSoilLabData(park = "ACAD") |> 
+  filter(Horizon_QC == "A") |> 
+  select(Plot_Name, soilYear = SampleYear, hor_A = horizon_depth, soilpH, pctTN, pctTC,
+         Ca_Al, C_N, BaseSat, AlSat)
+
+soil_depth <- full_join(soil_info_O %>% select(Plot_Name, soilYear, hor_O),
+                        soil_info_A %>% select(Plot_Name, soilYear, hor_A),
+                        by = c("Plot_Name", "soilYear")) %>% 
+               replace(is.na(.), 0) %>%
+               mutate(horizon_depth = hor_O + hor_A)
+
+soil_info <- left_join(soil_info_O |> select(-hor_O), 
+                       soil_depth, 
+                       by = c("Plot_Name", "soilYear")) |> 
+             arrange(Plot_Name, -soilYear) |> 
+             group_by(Plot_Name) |> 
+             slice(1)
+
+head(soil_info)
 
 soil_plots <- left_join(plot_info %>% select(Plot_Name), soil_info, by = "Plot_Name")
 miss_soil_plots <- soil_plots$Plot_Name[is.na(soil_plots$soilYear)]
 miss_soil_plots # All but 029 are because of A horizons instead of O. Will use A where O isn't available.
 # Have to grab cycle 1 record for 029 because we're missing cycle 2 data.
 
-miss_soil_info <- joinSoilLabData(park = "ACAD", from = 2007, to = 2019) %>%  # cycle 2: best coverage of all plots
-  filter(Plot_Name %in% miss_soil_plots) %>% 
-  select(Plot_Name, soilYear = SampleYear, Horizon_QC, horizon_depth, soilpH, pctTN, pctTC, 
-         Ca_Al, C_N, BaseSat, AlSat) %>% group_by(Plot_Name) %>% 
-  slice(1) %>% select(-Horizon_QC)
+# take most recent sample from plot missing in cycle 2
+miss_soil_info <- joinSoilLabData(park = "ACAD") |> 
+  filter(Horizon_QC == "A") |> 
+  filter(Plot_Name %in% miss_soil_plots) |> 
+  select(Plot_Name, soilYear = SampleYear, horizon_depth, soilpH, pctTN, pctTC,
+         Ca_Al, C_N, BaseSat, AlSat) |> 
+  arrange(Plot_Name, -soilYear) |> 
+  group_by(Plot_Name) |> slice(1)
 
 soil_info_fix <- rbind(soil_info, miss_soil_info)
 

@@ -355,6 +355,8 @@ table(complete.cases(dep)) # All T
 # dep$NO3[dep$NO3 == -9.0] <- NA
 # dep$SO4[dep$SO4 == -9.0] <- NA
 # dep$pH[dep$pH == -9.0] <- NA
+#cor(dep[,c("NO3", "SO4", "pH", "ppt")])
+
 
 #----- Combine datasets ------
 names(prism_comb) #PlotName year
@@ -372,3 +374,5 @@ write.csv(clim_comb4, "./data/ACAD_climate_data.csv", row.names = F)
 
 core_clim <- left_join(clim_comb4, plot_data_comb3, by = c("Plot_Name", "year" = "Year"))
 write.csv(core_clim, "./data/ACAD_plot_core_climate_full_data.csv", row.names = F)
+
+

@@ -19,13 +19,13 @@ simpd <- fulld |> select(Plot_Name,
                          X = xCoordinate, Y = yCoordinate,
                          Physio = PhysiographySummary, Aspect, forest_type, elev_m, 
                          Pct_Rock, Pct_Bryophyte, PlotSlope, Stand_Structure, Pct_Crown_Closure,
-                         live_stems_ha, 
-                         liveBA_m2ha, horizon_depth, soilpH, pctTN, pctTC, Ca_Al,
+                         Avg_Height_Codom, Avg_Height_Inter, live_stems_ha, liveBA_m2ha, 
+                         horizon_depth, soilpH, pctTN, pctTC, Ca_Al,
                          C_N, BaseSat, AlSat, northiness, eastness, fire1947, 
                          Crown_Class, est_age, DBH = DBH_num, BA_pct_lg,
                          NO3, SO4, pH,
                          dm_ppt_sum_1:dm_ppt_sum_12, 
-                         pr_ppt_01:pr_tmax_12,
+                         # pr_ppt_01:pr_tmax_12,
                          #dm_no_ppt_days_1:dm_no_ppt_days_12,
                          dm_tmax_mean_1:dm_tmax_mean_12, 
                          dm_tmin_mean_1:dm_tmin_mean_12,
@@ -47,23 +47,22 @@ simpd2 <- simpd |>
   mutate(tmin_10_lag = dplyr::lag(tmin_10, 1),
          tmin_11_lag = dplyr::lag(tmin_11, 1),
          tmin_12_lag = dplyr::lag(tmin_12, 1),
-         tmin_10_lag_pr = dplyr::lag(pr_tmin_10, 1),
-         tmin_11_lag_pr = dplyr::lag(pr_tmin_11, 1),
-         tmin_12_lag_pr = dplyr::lag(pr_tmin_12, 1),
+         # tmin_10_lag_pr = dplyr::lag(pr_tmin_10, 1),
+         # tmin_11_lag_pr = dplyr::lag(pr_tmin_11, 1),
+         # tmin_12_lag_pr = dplyr::lag(pr_tmin_12, 1),
          tmin_wint = pmin(tmin_1, tmin_2, tmin_3, 
                           tmin_10_lag, tmin_11_lag, tmin_12_lag),
-         tmin_wint_pr = pmin(pr_tmin_01, pr_tmin_02, pr_tmin_03, 
-                             tmin_10_lag_pr, tmin_11_lag_pr, tmin_12_lag_pr),
+         # tmin_wint_pr = pmin(pr_tmin_01, pr_tmin_02, pr_tmin_03, 
+         #                     tmin_10_lag_pr, tmin_11_lag_pr, tmin_12_lag_pr),
          tmax_gs = pmax(tmax_4, tmax_5, tmax_6, tmax_7, tmax_8, tmax_9),
-         tmax_gs_pr = pmax(pr_tmax_04, pr_tmax_05, pr_tmax_06, pr_tmax_07, pr_tmax_08, pr_tmax_09),
-         ppt_gs = ppt_4 + ppt_5 + ppt_6 + ppt_7 + ppt_8 + ppt_9,
-         ppt_gs_pr = pr_ppt_04 + pr_ppt_05 + pr_ppt_06 + pr_ppt_07 + pr_ppt_08 + pr_ppt_09) |> 
+         #tmax_gs_pr = pmax(pr_tmax_04, pr_tmax_05, pr_tmax_06, pr_tmax_07, pr_tmax_08, pr_tmax_09),
+         #ppt_gs_pr = pr_ppt_04 + pr_ppt_05 + pr_ppt_06 + pr_ppt_07 + pr_ppt_08 + pr_ppt_09),
+         ppt_gs = ppt_4 + ppt_5 + ppt_6 + ppt_7 + ppt_8 + ppt_9) |> 
   ungroup() |> 
   select(Plot_Name:pH, ppt_4:ppt_9, 
-         ppt_4_pr = pr_ppt_04, ppt_5_pr = pr_ppt_05, ppt_6_pr = pr_ppt_06,
-         ppt_7_pr = pr_ppt_07, ppt_8_pr = pr_ppt_08, ppt_9_pr = pr_ppt_09,
-         ppt_gs, ppt_gs_pr, tmax_gs, tmax_gs_pr, tmin_wint, tmin_wint_pr, 
-         SPEI01_1:SPEI03_12)
+         # ppt_4_pr = pr_ppt_04, ppt_5_pr = pr_ppt_05, ppt_6_pr = pr_ppt_06,
+         # ppt_7_pr = pr_ppt_07, ppt_8_pr = pr_ppt_08, ppt_9_pr = pr_ppt_09,
+         ppt_gs, tmax_gs, tmin_wint, SPEI01_1:SPEI03_12)
 names(simpd2)
 #----- Calculate growing season length. -----
 comb_daymet <- function(plot){
@@ -182,8 +181,6 @@ vars <- c("SPEI01_4", "SPEI01_5", "SPEI01_6", "SPEI01_7",
           "SPEI03_8", "SPEI03_9", "SPEI03_10",
           "NO3", "SO4", "pH", "tmin_wint", "tmax_gs", "ppt_gs", 
           "ppt_4", "ppt_5", "ppt_6", "ppt_7", "ppt_8",
-          "tmin_wint_pr", "tmax_gs_pr", "ppt_gs_pr", 
-          "ppt_4_pr", "ppt_5_pr", "ppt_6_pr", "ppt_7_pr", "ppt_8_pr",
           "gs_5c_length", "gs_ff_length", "spring_5c_days", "fall_5c_days")
 
 simpd3 <- full_join(simpd2, gs_data, by = c("Plot_Name", "Year" = "year")) |> 
@@ -219,8 +216,8 @@ core_rolls <- simpd3 %>% #select(Plot_Name, coreID, Year, ppt_4) |>
  data.frame()
 
 names(core_rolls)
-old_names <- names(core_rolls[1:35])
-new_order <- sort(names(core_rolls[,36:ncol(core_rolls)]))
+old_names <- names(core_rolls[1:37])
+new_order <- sort(names(core_rolls[,38:ncol(core_rolls)]))
 core_rolls2 <- core_rolls[,c(old_names, new_order)]
 
 names(core_rolls2) <- gsub("_lag1_roll", "_roll", names(core_rolls2))
